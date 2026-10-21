@@ -9,9 +9,9 @@ import secrets
 
 from fastapi.responses import HTMLResponse
 
-# 会话失效或进入失败时回到小程序的网页页，经萝卜的 ChatGPT 入口重新进入（与小程序首页的 ChatGPT 卡片打开的一样，
+# 会话失效或进入失败时回到小程序的网页页，经萝卜的入口重新进入（与小程序首页的「问一问」卡片打开的一样，
 # 见萝卜 ops/host/miniapp/entries.json）；static/static/loader.js 里有同一个地址。
-MINIAPP_REENTRY = '/pages/web/index?to=page&path=%2Faccount%2Fapi%2Fopenwebui%2Fenter&title=ChatGPT'
+MINIAPP_REENTRY = '/pages/web/index?to=page&path=%2Faccount%2Fapi%2Fopenwebui%2Fenter&title=%E9%97%AE%E4%B8%80%E9%97%AE'
 JWEIXIN = 'https://res.wx.qq.com/open/js/jweixin-1.6.0.js'
 
 _STYLE = """
