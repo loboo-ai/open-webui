@@ -175,7 +175,10 @@ async def get_headers_and_cookies(
     user=None,
 ):
     config = config or {}
-    cookies = getattr(request, 'cookies', {}) if config.get('forward_cookies', False) else {}
+    auth_type = config.get('auth_type')
+    # loboo fork: a member key never travels with forwarded cookies.
+    forward_cookies = config.get('forward_cookies', False) and auth_type != 'loboo'
+    cookies = getattr(request, 'cookies', {}) if forward_cookies else {}
     headers = {
         'Content-Type': 'application/json',
         **(
@@ -197,7 +200,6 @@ async def get_headers_and_cookies(
             headers[FORWARD_SESSION_INFO_HEADER_CHAT_ID] = metadata.get('chat_id')
 
     token = None
-    auth_type = config.get('auth_type')
 
     if auth_type == 'bearer' or auth_type is None:
         # Default to bearer if not specified
@@ -222,6 +224,11 @@ async def get_headers_and_cookies(
 
     elif auth_type in ('azure_ad', 'microsoft_entra_id'):
         token = get_microsoft_entra_id_access_token()
+    elif auth_type == 'loboo':
+        # loboo fork: the requesting member's own key from Loboo, never the connection's key.
+        from open_webui.loboo.hooks import connection_key
+
+        token = await connection_key(url, user)
 
     if token:
         headers['Authorization'] = f'Bearer {token}'
@@ -229,6 +236,11 @@ async def get_headers_and_cookies(
     if config.get('headers') and isinstance(config.get('headers'), dict):
         custom_headers = await get_custom_headers(config.get('headers'), user, metadata, request=request)
         headers.update(custom_headers)
+        if auth_type == 'loboo':
+            # Custom headers cannot replace the member key, nor send one when there is no user.
+            headers = {name: value for name, value in headers.items() if name.lower() != 'authorization'}
+            if token:
+                headers['Authorization'] = f'Bearer {token}'
 
     return headers, cookies
 

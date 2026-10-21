@@ -140,6 +140,7 @@ from open_webui.events import (
     get_event_catalog as get_event_catalog_items,
 )
 from open_webui.internal.db import engine, get_async_session
+from open_webui.loboo import router as loboo_router
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
 from open_webui.models.chats import ChatForm, Chats
@@ -909,6 +910,8 @@ app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])
 app.include_router(terminals.router, prefix='/api/v1/terminals', tags=['terminals'])
 app.include_router(automations.router, prefix='/api/v1/automations', tags=['automations'])
 app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])
+# loboo fork: passwordless sign-in from the Loboo mini program.
+app.include_router(loboo_router.router, prefix='/api/v1/loboo', tags=['loboo'])
 
 # SCIM 2.0 API for identity management
 if ENABLE_SCIM:

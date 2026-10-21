@@ -1,0 +1,33 @@
+# loboo-webui：二开的 Open WebUI，经 openresty 以 https://m.loboo-ai.com 对外。
+# 安装：install -m 644 /opt/loboo-webui/app/deploy/loboo-webui/loboo-webui.service /etc/systemd/system/
+[Unit]
+Description=loboo-webui (Open WebUI fork, m.loboo-ai.com)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/loboo-webui/app/backend
+EnvironmentFile=/opt/loboo-webui/loboo-webui.env
+# 第三方库的 ~/.cache 落在数据目录里（ProtectHome 下 /root 不可写）。
+Environment=HOME=/opt/loboo-webui/data/home
+Environment=PYTHONUNBUFFERED=1
+# 只监听 docker 网桥，openresty 容器经 172.17.0.1 转发；单进程（萝卜 Key 缓存在进程内）。
+ExecStart=/opt/loboo-webui/venv/bin/uvicorn open_webui.main:app --host 172.17.0.1 --port 18120 --forwarded-allow-ips 172.17.0.0/16 --workers 1
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/loboo-webui/data /opt/loboo-webui/logs
+StandardOutput=append:/opt/loboo-webui/logs/loboo-webui.log
+StandardError=inherit
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

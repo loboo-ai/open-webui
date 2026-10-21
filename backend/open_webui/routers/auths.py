@@ -39,6 +39,7 @@ from open_webui.env import (
 )
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
+from open_webui.loboo import hooks as loboo_hooks
 from open_webui.models.auths import (
     AddUserForm,
     AddUserResponse,
@@ -176,6 +177,9 @@ async def get_session_user(
     user=Depends(get_human_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    # loboo fork: refresh the member's Loboo config on every full page load.
+    await loboo_hooks.on_session(user)
+
     token = None
     auth_header = request.headers.get('Authorization')
     if auth_header:
@@ -772,6 +776,9 @@ async def signin(
         user, auth = authenticated if authenticated else (None, None)
 
     if user:
+        if auth_source == 'password':
+            # loboo fork: fetch the member's Loboo config; members disabled in Loboo cannot sign in.
+            await loboo_hooks.on_password_signin(user)
         return await create_signin_response(request, user, db, response, set_cookie=True, source=auth_source, auth=auth)
     else:
         raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
