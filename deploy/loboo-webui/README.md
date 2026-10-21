@@ -1,6 +1,6 @@
 # loboo-webui 部署与运维
 
-loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com`。萝卜服务首页和小程序首页的「ChatGPT」卡片免密进入这里，对话用成员本人的 CPA Key。萝卜接入的代码在 `backend/open_webui/loboo/`。
+loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com`；小程序里用 `https://m.haina-api.net`（小程序只能打开它后台配置的业务域名，业务域名要求已备案）。两个域名是同一个服务。萝卜服务首页和小程序首页的「ChatGPT」卡片免密进入这里，对话用成员本人的 CPA Key。萝卜接入的代码在 `backend/open_webui/loboo/`。
 
 ## 布局
 
@@ -23,7 +23,7 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 ## 运行方式
 
 - systemd 单元 `loboo-webui`（`loboo-webui.service`），uvicorn 单进程监听 `172.17.0.1:18120`。萝卜 Key 缓存在进程内，不能开多个 worker。
-- openresty 的 `m.loboo-ai.com` 站点转发到这个端口，要透传 WebSocket（`Upgrade`、`Connection`），不缓冲响应，读超时放长。
+- openresty 的 `m.loboo-ai.com`、`m.haina-api.net` 两个站点都转发到这个端口，要透传 WebSocket（`Upgrade`、`Connection`），不缓冲响应，读超时放长。新增对外域名时，同时加进 `CORS_ALLOW_ORIGIN`，并在根目录放小程序业务域名的校验文件。
 - 模型连接在管理后台配：地址 `https://ootd.haina-api.net/v1`，key 留空，`auth_type` 为 `loboo`，不填模型 ID（从 CPA 动态拉取）。key 留空时，就算有人在界面上把认证方式改掉，最坏也只是不带 key，不会用错别人的 key。
 
 ## 日常操作
@@ -47,7 +47,7 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 5. 照 `loboo-webui.env.example` 写 `loboo-webui.env`。`WEBUI_SECRET_KEY` 定下后不能改。Open WebUI 的多数开关只在第一次启动时写进数据库，之后改环境变量不生效，要到管理后台或数据库里改。
 6. 安装单元、启动：`install -m 644 app/deploy/loboo-webui/loboo-webui.service /etc/systemd/system/`，`systemctl daemon-reload && systemctl enable --now loboo-webui`，`ln -s app/deploy/loboo-webui/ctl.sh /opt/loboo-webui/ctl`。
 7. 第一次启动按 `WEBUI_ADMIN_*` 建好管理员。用管理员登录后：建一把 API key，交给萝卜服务作 `LOBOO_WEBUI_ADMIN_TOKEN`（只放开了 `/api/v1/users` 与 `/api/v1/auths/add`）；按上面配好模型连接。
-8. 萝卜服务 `.env` 设 `LOBOO_WEBUI_BASE_URL`（`http://172.17.0.1:18120`）、`LOBOO_WEBUI_ADMIN_TOKEN`、`LOBOO_WEBUI_PUBLIC_URL`（`https://m.loboo-ai.com`）、`LOBOO_WEBUI_SERVICE_TOKEN`（与这里的 `LOBOO_SERVICE_TOKEN` 相同），重启账号应用。网关对公网屏蔽萝卜的 `/account/api/openwebui/redeem` 与 `/profile`。
+8. 萝卜服务 `.env` 设 `LOBOO_WEBUI_BASE_URL`（`http://172.17.0.1:18120`）、`LOBOO_WEBUI_ADMIN_TOKEN`、`LOBOO_WEBUI_PUBLIC_URL`（`https://m.loboo-ai.com`）、`LOBOO_WEBUI_ALIAS_URLS`（`https://m.haina-api.net`，对应小程序用的别名域名）、`LOBOO_WEBUI_SERVICE_TOKEN`（与这里的 `LOBOO_SERVICE_TOKEN` 相同），重启账号应用。网关对公网屏蔽萝卜的 `/account/api/openwebui/redeem` 与 `/profile`。
 
 ## 排查
 
