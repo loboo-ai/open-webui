@@ -16,12 +16,13 @@ from open_webui.loboo import config
 MINIAPP_REENTRY = '/pages/web/index?to=page&path=%2Faccount%2Fapi%2Fopenwebui%2Fenter&title=%E9%97%AE%E4%B8%80%E9%97%AE'
 JWEIXIN = 'https://res.wx.qq.com/open/js/jweixin-1.6.0.js'
 
-# 深色跟随系统；小程序里跟随小程序，小程序只有浅色（与萝卜网页一致：<html> 带 mini-program 时不用深色）。
+# 深色跟随系统；小程序里跟随小程序：只有浅色，底色用小程序的 #faf8f3
+# （与萝卜网页一致：<html> 带 mini-program 时不用深色）。
 _MINI_PROGRAM = "if(/miniProgram/i.test(navigator.userAgent))document.documentElement.classList.add('mini-program')"
 _STYLE = """
 :root{color-scheme:light dark;--fg:#171717;--muted:#6b7280;--bg:#fff;--card:#f9fafb;--line:#e5e7eb;
 --accent:#171717;--on-accent:#fff}
-:root.mini-program{color-scheme:light}
+:root.mini-program{color-scheme:light;--bg:#faf8f3}
 @media (prefers-color-scheme:dark){:root:not(.mini-program){--fg:#f3f4f6;--muted:#9ca3af;--bg:#171717;
 --card:#262626;--line:#374151;--accent:#f3f4f6;--on-accent:#171717}}
 *{box-sizing:border-box}

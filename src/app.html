@@ -48,11 +48,22 @@
 			// loboo fork: inside the WeChat mini program the theme follows the mini program, which is light only
 			// (Loboo's own pages do the same), so "system" never resolves to dark there. Explicit themes still apply.
 			if (/miniProgram/i.test(navigator.userAgent)) {
+				document.documentElement.classList.add('mini-program');
 				const matchMedia = window.matchMedia.bind(window);
 				window.matchMedia = (query) =>
 					matchMedia(/prefers-color-scheme\s*:\s*dark/i.test(query) ? 'not all' : query);
 			}
 		</script>
+		<style>
+			/* loboo fork: in the mini program the light theme's white is the mini program's own background
+			   (its navigation bar and Loboo's pages use #faf8f3), so the page meets the bar without a seam. */
+			html.mini-program.light {
+				--color-white: #faf8f3;
+			}
+			html.mini-program.light #splash-screen {
+				background: #faf8f3;
+			}
+		</style>
 
 		<script>
 			// On page load or when changing themes, best to add inline in `head` to avoid FOUC
