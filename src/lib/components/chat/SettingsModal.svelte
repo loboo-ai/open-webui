@@ -379,8 +379,8 @@
 
 	const getAvailableSettings = (personalTabs: SettingsTab[], administratorTabs: SettingsTab[]) => {
 		const personalSettings = personalTabs.filter((tab) => {
-			// loboo fork: members do not manage usage stats or voice settings; admins keep both tabs.
-			if (tab.id === 'usage' || tab.id === 'audio') {
+			// loboo fork: members see neither usage stats, voice settings nor the about page; admins keep all three.
+			if (tab.id === 'usage' || tab.id === 'audio' || tab.id === 'about') {
 				return $user?.role === 'admin';
 			}
 
