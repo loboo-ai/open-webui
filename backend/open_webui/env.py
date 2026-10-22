@@ -961,7 +961,12 @@ WEBUI_NAME = os.getenv('WEBUI_NAME', 'Open WebUI')
 # and any visual, textual, or symbolic identifiers it preserves.
 # Do not alter, remove, obscure, or replace it except as LICENSE permits:
 # https://docs.openwebui.com/license.
-WEBUI_FAVICON_URL = 'https://openwebui.com/favicon.png'
+# loboo fork: with WEBUI_URL set, webhook cards show this site's own logo.
+WEBUI_FAVICON_URL = (
+    f'{os.getenv("WEBUI_URL", "").rstrip("/")}/static/favicon.png'
+    if os.getenv('WEBUI_URL')
+    else 'https://openwebui.com/favicon.png'
+)
 WEBUI_BUILD_HASH = os.getenv('WEBUI_BUILD_HASH', 'dev-build')
 TRUSTED_SIGNATURE_KEY = os.getenv('TRUSTED_SIGNATURE_KEY', '')
 
