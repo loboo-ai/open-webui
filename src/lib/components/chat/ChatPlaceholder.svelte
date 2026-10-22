@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
+	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { ASSISTANT_AVATAR, ASSISTANT_NAME } from '$lib/loboo';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
 
-	import { config, user, models as _models, temporaryChatEnabled } from '$lib/stores';
+	import { config, models as _models, temporaryChatEnabled } from '$lib/stores';
 	import { onMount, getContext } from 'svelte';
 
 	import { blur, fade } from 'svelte/transition';
@@ -59,37 +60,15 @@
 
 {#key mounted}
 	<div class="m-auto w-full max-w-[58rem] px-8 lg:px-20">
+		<!-- loboo fork: one 萝卜哥 whatever models are selected (src/lib/loboo.ts) -->
 		<div class="flex justify-start">
-			<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 200 }}>
-				{#each models as model, modelIdx}
-					<button
-						on:click={() => {
-							selectedModelIdx = modelIdx;
-						}}
-					>
-						<Tooltip
-							content={DOMPurify.sanitize(
-								marked.parse(
-									sanitizeResponseContent(selectedModelDescription).replaceAll('\n', '<br>')
-								)
-							)}
-							placement="right"
-						>
-							<img
-								src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${model?.id}&lang=${$i18n.language}`}
-								class=" size-[2.7rem] rounded-full"
-								alt="logo"
-								draggable="false"
-								on:error={(e) => {
-									// LICENSE covers this Open WebUI fallback logo.
-									// Do not alter, remove, obscure, or replace it except as LICENSE permits:
-									// https://docs.openwebui.com/license.
-									e.currentTarget.src = '/favicon.png';
-								}}
-							/>
-						</Tooltip>
-					</button>
-				{/each}
+			<div class="flex mb-0.5" in:fade={{ duration: 200 }}>
+				<img
+					src={ASSISTANT_AVATAR}
+					class=" size-[2.7rem] rounded-full"
+					alt="logo"
+					draggable="false"
+				/>
 			</div>
 		</div>
 
@@ -110,11 +89,9 @@
 		>
 			<div>
 				<div class=" capitalize line-clamp-1" in:fade={{ duration: 200 }}>
-					{#if selectedModelName}
-						{selectedModelName}
-					{:else}
-						{$i18n.t('Hello, {{name}}', { name: $user?.name })}
-					{/if}
+					<Tooltip content={selectedModelName} placement="top-start" className="w-fit">
+						{ASSISTANT_NAME}
+					</Tooltip>
 				</div>
 
 				<div in:fade={{ duration: 200, delay: 200 }}>
