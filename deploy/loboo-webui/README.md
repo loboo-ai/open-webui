@@ -25,7 +25,7 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 - systemd 单元 `loboo-webui`（`loboo-webui.service`），uvicorn 单进程监听 `172.17.0.1:18120`。萝卜 Key 缓存在进程内，不能开多个 worker。
 - openresty 的 `m.loboo-ai.com`、`m.haina-api.net` 两个站点都转发到这个端口，要透传 WebSocket（`Upgrade`、`Connection`），不缓冲响应，读超时放长。新增对外域名时，同时加进 `CORS_ALLOW_ORIGIN`，并在根目录放小程序业务域名的校验文件。
 - 模型连接在管理后台配：地址 `https://ootd.haina-api.net/v1`，key 留空，`auth_type` 为 `loboo`，不填模型 ID（从 CPA 动态拉取）。key 留空时，就算有人在界面上把认证方式改掉，最坏也只是不带 key，不会用错别人的 key。
-- 图片生成和编辑在管理后台「图像」里配，两边都选 OpenAI：地址同上，key 留空，模型 `gpt-image-2`，尺寸留空（不传尺寸，由模型决定）。地址是 CPA 时一律用本人的 Key，后台填的 key 不会用到；没开通 Codex 的人看到的提示和对话里一样。成员在输入框打开「图像」后，模型按需调用生成或编辑。
+- 图片生成和编辑在管理后台「图像」里配，两边都选 OpenAI：地址同上，key 留空，模型 `gpt-image-2`，尺寸留空（不传尺寸，由模型决定）。地址是 CPA 时一律用本人的 Key，后台填的 key 不会用到；没开通 Codex 的人看到的提示和对话里一样。成员在输入框「扩展功能」里打开「图片」后，对话模型按需调用生成或编辑，不用选图片模型。CPA 列出的 `gpt-image-*` 在管理后台「模型」里设为隐藏，不出现在对话模型列表；CPA 以后新增的图片模型也要这样隐藏。
 
 ## 日常操作
 
