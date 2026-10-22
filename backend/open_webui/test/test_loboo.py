@@ -1,4 +1,5 @@
 import base64
+import html
 import io
 import json
 import re
@@ -6,11 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from open_webui.loboo import config, credentials, hooks, pages
+from open_webui.loboo import client, config, credentials, hooks, identity, pages
+from open_webui.loboo import router as sso_router
 from open_webui.loboo.router import safe_next
 from open_webui.routers import images
 from open_webui.utils.headers import get_headers_and_cookies
 from PIL import Image
+from starlette.requests import Request
 
 
 @pytest.mark.parametrize(
@@ -173,3 +176,51 @@ async def test_loboo_images_use_the_member_key(monkeypatch):
     assert await refusal(generate, keyless) == (403, 'Codex 未开通')
     assert await refusal(edit, keyless) == (403, 'Codex 未开通')
     assert len(sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_loboo_sso_redeems_only_once_the_page_runs(monkeypatch):
+    monkeypatch.setattr(config, 'ENABLED', True)
+    monkeypatch.setattr(config, 'LOBOO_TRUSTED_ORIGINS', frozenset({'https://service.loboo-ai.com'}))
+    monkeypatch.setattr(config, 'LOBOO_PORTAL_URL', 'https://service.loboo-ai.com/account/')
+    redeemed = []
+
+    async def redeem(ticket):
+        redeemed.append(ticket)
+        return client.Profile('lb-1', '成员', None, 'inactive', None, None)
+
+    async def sso_user(loboo_user_id, browser_login, db=None):
+        return SimpleNamespace(id='u1', role='user')
+
+    async def sign_in(request, user, next_path, db):
+        return f'signed in, next {next_path}'
+
+    monkeypatch.setattr(client, 'redeem', redeem)
+    monkeypatch.setattr(identity, 'sso_user', sso_user)
+    monkeypatch.setattr(credentials, 'remember', lambda user_id, profile: None)
+    monkeypatch.setattr(sso_router, '_sign_in', sign_in)
+
+    def request(method, **headers):
+        raw = [(k.encode(), v.encode()) for k, v in {'host': 'm.loboo-ai.com', **headers}.items()]
+        return Request({'type': 'http', 'method': method, 'headers': raw})
+
+    def field(page, name):
+        return html.unescape(re.search(rf'name="{name}" value="([^"]*)"', page.body.decode()).group(1))
+
+    # 打开地址只回提交页、不兑换（WebView2 拦下跳转前的那次请求用不掉票据）；从萝卜页面来的带上签名的来路。
+    from_loboo = await sso_router.sso(request('GET', referer='https://service.loboo-ai.com/'), 't1', '/c/1')
+    from_elsewhere = await sso_router.sso(request('GET'), 't2', '/')
+    basis = field(from_loboo, 'basis')
+    assert redeemed == [] and (field(from_loboo, 'ticket'), field(from_loboo, 'next')) == ('t1', '/c/1')
+    assert basis.startswith('loboo page|') and field(from_elsewhere, 'basis') == ''
+
+    # 本站提交页发回来才兑换；签名的来路只对它绑定的票据有效，换一张票据就要确认。
+    same_site = request('POST', origin='https://m.loboo-ai.com')
+    assert await sso_router.sso_redeem(same_site, 't1', '/c/1', basis, None) == 'signed in, next /c/1'
+    confirm = await sso_router.sso_redeem(same_site, 't3', '/', basis, None)
+    assert '确认登录' in confirm.body.decode() and redeemed == ['t1', 't3']
+
+    # 别的网站替你提交的不兑换；浏览器里的出错页带成员回萝卜重新进入。
+    cross_site = await sso_router.sso_redeem(request('POST', origin='https://evil.example'), 't4', '/', basis, None)
+    assert cross_site.status_code == 403 and redeemed == ['t1', 't3']
+    assert 'href="https://service.loboo-ai.com/account/">回萝卜重新进入' in cross_site.body.decode()

@@ -1,7 +1,11 @@
 """免密登录：萝卜的 ChatGPT 入口跳到 GET /api/v1/loboo/sso?ticket=…&next=…，用一次性票据登录。
 
-在小程序里、或从萝卜的页面跳过来时直接进入；其他情况（别人发来的链接、从别的网站跳过来）先显示确认页，
-用户点继续后同源 POST 再签发，防止别人用自己的票据做链接，让你悄悄登进他的账号。
+打开地址时不兑换票据，只回一个提交页，页面运行起来才同源 POST 回来兑换：Windows 桌面端的 WebView2 会先请求
+一遍自己拦下的跳转，再把同一个地址交给系统浏览器，打开时就兑换的话票据会被它用掉。
+
+在小程序里、或从萝卜的页面跳过来时直接进入（打开地址时判断，签名后随提交页带回）；其他情况（别人发来的链接、
+从别的网站跳过来、桌面端交给系统浏览器）先显示确认页，用户点继续后同源 POST 再签发，防止别人用自己的票据做链接，
+让你悄悄登进他的账号。
 """
 
 import hashlib
@@ -25,6 +29,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 _MAX_NEXT = 2048
+_MAX_TICKET = 256
 # 确认页上的凭据多久内有效；它只能在本站同源提交。
 _GRANT_SECONDS = 120
 _GRANT_KEY = hashlib.sha256(b'open-webui/loboo-sso-grant/v1:' + WEBUI_SECRET_KEY.encode()).digest()
@@ -88,6 +93,26 @@ def _granted_user_id(grant: str) -> str | None:
     return None
 
 
+def _basis_grant(ticket: str, basis: str | None) -> str:
+    """打开地址时判断的直接进入来路，签名并绑定这张票据，随提交页带回兑换接口；没有来路时为空。"""
+    if not basis:
+        return ''
+    message = f'{basis}|{int(time.time()) + _GRANT_SECONDS}'
+    signature = hmac.new(_GRANT_KEY, f'basis|{message}|{ticket}'.encode(), hashlib.sha256).hexdigest()
+    return f'{message}|{signature}'
+
+
+def _granted_basis(grant: str, ticket: str) -> str | None:
+    try:
+        basis, expires, signature = grant.rsplit('|', 2)
+        expected = hmac.new(_GRANT_KEY, f'basis|{basis}|{expires}|{ticket}'.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(signature, expected) and int(expires) >= time.time():
+            return basis
+    except ValueError:
+        pass
+    return None
+
+
 def _same_origin(request: Request) -> bool:
     """确认是本站页面提交的：Origin 与 Host 一致；Origin 为 null 时以浏览器给的 Sec-Fetch-Site 为准。"""
     origin = request.headers.get('origin')
@@ -116,15 +141,29 @@ async def _sign_in(request: Request, user, next_path: str, db: AsyncSession) -> 
 
 
 @router.get('/sso')
-async def sso(
+async def sso(request: Request, ticket: str = '', next_path: str = Query('/', alias='next')):
+    miniapp = _in_miniapp(request)
+    if not config.ENABLED:
+        return pages.error('免密登录未开放，请用账号密码登录。', miniapp=miniapp, status_code=404)
+    if not ticket or len(ticket) > _MAX_TICKET:
+        return pages.error(_TICKET_MESSAGES[client.TICKET_INVALID], miniapp=miniapp, retry=True)
+    return pages.submit(ticket, safe_next(next_path), _basis_grant(ticket, _direct_basis(request)))
+
+
+@router.post('/sso')
+async def sso_redeem(
     request: Request,
-    ticket: str = '',
-    next_path: str = Query('/', alias='next'),
+    ticket: str = Form(''),
+    next_path: str = Form('/', alias='next'),
+    basis: str = Form(''),
     db: AsyncSession = Depends(get_async_session),
 ):
     miniapp = _in_miniapp(request)
     if not config.ENABLED:
         return pages.error('免密登录未开放，请用账号密码登录。', miniapp=miniapp, status_code=404)
+    # 只收本站提交页发来的：别的网站替你提交，就能用他自己的票据让你登进他的账号。
+    if not _same_origin(request):
+        return pages.error(_TICKET_MESSAGES[client.TICKET_INVALID], miniapp=miniapp, status_code=403)
     target = safe_next(next_path)
     # 等萝卜服务时还没查过库，不占数据库连接。
     try:
@@ -139,9 +178,9 @@ async def sso(
     except identity.IdentityMismatch as e:
         return pages.error(str(e), miniapp=miniapp, status_code=409)
     credentials.remember(user.id, profile)
-    basis = _direct_basis(request)
-    log.info('loboo: sign-in for user %s %s', user.id, f'directly from {basis}' if basis else 'awaits confirmation')
-    if basis:
+    direct = _granted_basis(basis, ticket)
+    log.info('loboo: sign-in for user %s %s', user.id, f'directly from {direct}' if direct else 'awaits confirmation')
+    if direct:
         return await _sign_in(request, user, target, db)
     return pages.confirm(profile.display_name, profile.browser_login, _grant(user.id), target)
 

@@ -1,4 +1,4 @@
-"""免密登录的三个页面：桥接（写入登录状态后进入）、确认（浏览器里打开时先确认身份）、出错。
+"""免密登录的页面：提交（页面运行后才兑换票据）、桥接（写入登录状态后进入）、确认（浏览器里打开时先确认身份）、出错。
 
 页面不经前端构建，内联样式和脚本都带 nonce；动态文本一律转义，内联数据放进 JSON 脚本块再读取。
 """
@@ -8,6 +8,8 @@ import json
 import secrets
 
 from fastapi.responses import HTMLResponse
+
+from open_webui.loboo import config
 
 # 会话失效或进入失败时回到小程序的网页页，经萝卜的入口重新进入（与小程序首页的「问一问」卡片打开的一样，
 # 见萝卜 ops/host/miniapp/entries.json）；static/static/loader.js 里有同一个地址。
@@ -86,6 +88,26 @@ def _page(
     )
 
 
+def submit(ticket: str, next_path: str, basis: str) -> HTMLResponse:
+    """
+    打开免密登录地址后的第一页：页面运行起来才把票据同源提交去兑换（POST /api/v1/loboo/sso）。
+    只请求、不运行页面的客户端用不掉票据：Windows 桌面端的 WebView2 会先请求一遍自己拦下的跳转，
+    再把同一个地址交给系统浏览器。
+    """
+    nonce = secrets.token_urlsafe(16)
+    body = (
+        '<div class="spinner"></div><p>正在进入…</p>'
+        '<form id="loboo-sso" method="post" action="/api/v1/loboo/sso">'
+        f'<input type="hidden" name="ticket" value="{html.escape(ticket)}">'
+        f'<input type="hidden" name="next" value="{html.escape(next_path)}">'
+        f'<input type="hidden" name="basis" value="{html.escape(basis)}">'
+        '<noscript><button class="primary" type="submit">继续</button></noscript></form>'
+        f'<script nonce="{nonce}">document.getElementById(\'loboo-sso\').submit();</script>'
+    )
+    # 同确认页：提交时要带上真实的 Origin，兑换接口据此核对同源。
+    return _page('正在进入…', body, nonce=nonce, referrer='same-origin')
+
+
 def bridge(token: str, next_path: str) -> HTMLResponse:
     """写入登录状态后整页进入：先清掉可能残留的别人的 token，SPA 启动时只认 localStorage。"""
     nonce = secrets.token_urlsafe(16)
@@ -122,14 +144,16 @@ def confirm(display_name: str, browser_login: str | None, grant: str, next_path:
 def error(message: str, *, miniapp: bool, retry: bool = False, status_code: int = 400) -> HTMLResponse:
     """
     进入失败。在小程序里给“重新进入”，回小程序重新换票据；retry 为 True（票据失效）时自动回去一次，
-    30 秒内不重复，免得来回跳。浏览器里给“前往登录”。
+    30 秒内不重复，免得来回跳。浏览器里给“回萝卜重新进入”，回萝卜服务首页重新点 ChatGPT；没配首页地址时给“前往登录”。
     """
     nonce = secrets.token_urlsafe(16)
     if not miniapp:
-        body = (
-            f'<h1>没能进入</h1><p>{html.escape(message)}</p>'
-            '<div class="actions"><a class="button primary" href="/auth">前往登录</a></div>'
+        action = (
+            f'<a class="button primary" href="{html.escape(config.LOBOO_PORTAL_URL)}">回萝卜重新进入</a>'
+            if config.LOBOO_PORTAL_URL
+            else '<a class="button primary" href="/auth">前往登录</a>'
         )
+        body = f'<h1>没能进入</h1><p>{html.escape(message)}</p><div class="actions">{action}</div>'
         return _page('没能进入', body, nonce=nonce, status_code=status_code)
     data = _json_for_script({'url': MINIAPP_REENTRY, 'auto': retry})
     body = (

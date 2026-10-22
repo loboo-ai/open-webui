@@ -25,6 +25,10 @@ LOBOO_TRUSTED_ORIGINS = frozenset(
     for origin in os.environ.get('LOBOO_TRUSTED_ORIGINS', '').split(',')
     if origin.strip()
 )
+# 萝卜服务首页的对外地址，如 https://service.loboo-ai.com/account/。浏览器里进入失败时，出错页带成员回这里
+# 重新点 ChatGPT（成员的密码是随机的，走不了密码登录）。只认 http(s)，没配时出错页给「前往登录」。
+_portal = os.environ.get('LOBOO_PORTAL_URL', '').strip()
+LOBOO_PORTAL_URL = _portal if urlsplit(_portal).scheme in ('http', 'https') else ''
 # 整页打开时在后台刷新配置，同一个人最多这么久一次。
 REFRESH_INTERVAL_SECONDS = 60
 # 调萝卜服务的超时；小程序进入时用户在等，不能太长。
