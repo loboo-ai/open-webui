@@ -74,6 +74,7 @@
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 	import { matchKeybinding, Shortcut } from '$lib/shortcuts';
 	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
+	import { IMAGE_TOGGLE_LABEL } from '$lib/loboo';
 
 	import { createNoteHandler } from '../notes/utils';
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
@@ -2340,7 +2341,8 @@
 										</button>
 									</InputMenu>
 
-									{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+									<!-- loboo fork: members get no integrations menu; images have their own switch below. -->
+									{#if $_user?.role === 'admin' && (showWebSearchButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0))}
 										<div
 											class="flex self-center w-[0.0625rem] h-4 mx-1 bg-gray-200/50 dark:bg-gray-800/50 shrink-0"
 										/>
@@ -2349,13 +2351,12 @@
 											selectedModels={selectedModelIds}
 											{toggleFilters}
 											{showWebSearchButton}
-											{showImageGenerationButton}
+											showImageGenerationButton={false}
 											{showCodeInterpreterButton}
 											bind:selectedToolIds
 											bind:selectedSkillIds
 											bind:selectedFilterIds
 											bind:webSearchEnabled
-											bind:imageGenerationEnabled
 											bind:codeInterpreterEnabled
 											oauthRedirectHandler={(tool: {
 												id: string;
@@ -2564,22 +2565,19 @@
 											</Tooltip>
 										{/if}
 
-										{#if imageGenerationEnabled && showImageGenerationButton}
-											<Tooltip content={$i18n.t('Image')} placement="top">
-												<button
-													on:click|preventDefault={() =>
-														(imageGenerationEnabled = !imageGenerationEnabled)}
-													type="button"
-													class="group p-[0.375rem] flex gap-1.5 items-center text-sm rounded-full transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {imageGenerationEnabled
-														? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border border-sky-200/40 dark:border-sky-500/20'
-														: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 '}"
-												>
-													<Photo className="size-4" strokeWidth="1.75" />
-													<div class="hidden group-hover:block">
-														<XMark className="size-4" strokeWidth="1.75" />
-													</div>
-												</button>
-											</Tooltip>
+										{#if showImageGenerationButton}
+											<button
+												aria-pressed={imageGenerationEnabled}
+												on:click|preventDefault={() =>
+													(imageGenerationEnabled = !imageGenerationEnabled)}
+												type="button"
+												class="px-2.5 py-1 flex gap-1.5 items-center text-sm rounded-full border transition-colors duration-300 focus:outline-hidden max-w-full overflow-hidden {imageGenerationEnabled
+													? ' text-sky-500 dark:text-sky-300 bg-sky-50 hover:bg-sky-100 dark:bg-sky-400/10 dark:hover:bg-sky-700/10 border-sky-200/40 dark:border-sky-500/20'
+													: 'bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 border-gray-200/70 dark:border-gray-700/60'}"
+											>
+												<Photo className="size-4" strokeWidth="1.75" />
+												<span class="whitespace-nowrap">{IMAGE_TOGGLE_LABEL}</span>
+											</button>
 										{/if}
 
 										{#if codeInterpreterEnabled && showCodeInterpreterButton}
