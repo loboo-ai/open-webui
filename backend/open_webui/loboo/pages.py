@@ -6,19 +6,28 @@
 import html
 import json
 import secrets
+from urllib.parse import urlencode
 
 from fastapi.responses import HTMLResponse
 
 from open_webui.loboo import config
 
-# 会话失效或进入失败时回到小程序的网页页，经萝卜的入口重新进入（与小程序首页的「问一问」卡片打开的一样，
-# 见萝卜 ops/host/miniapp/entries.json）；static/static/loader.js 里有同一个地址。
-MINIAPP_REENTRY = '/pages/web/index?to=page&path=%2Faccount%2Fapi%2Fopenwebui%2Fenter&title=%E9%97%AE%E4%B8%80%E9%97%AE'
+# 小程序首页的入口名（萝卜 ops/host/miniapp/entries.json）。小程序的导航栏显示网页标题，
+# 小程序里各页的标题都固定成它（src/app.html 同样如此）。
+MINIAPP_TITLE = '问一问'
+# 会话失效或进入失败时回到小程序的网页页，经萝卜的入口重新进入（与「问一问」卡片打开的一样）；
+# static/static/loader.js 里有同一个地址。
+MINIAPP_REENTRY = '/pages/web/index?' + urlencode(
+    {'to': 'page', 'path': '/account/api/openwebui/enter', 'title': MINIAPP_TITLE}
+)
 JWEIXIN = 'https://res.wx.qq.com/open/js/jweixin-1.6.0.js'
 
 # 深色跟随系统；小程序里跟随小程序：只有浅色，底色用小程序的 #faf8f3
-# （与萝卜网页一致：<html> 带 mini-program 时不用深色）。
-_MINI_PROGRAM = "if(/miniProgram/i.test(navigator.userAgent))document.documentElement.classList.add('mini-program')"
+# （与萝卜网页一致：<html> 带 mini-program 时不用深色），标题用入口名。
+_MINI_PROGRAM = (
+    "if(/miniProgram/i.test(navigator.userAgent)){document.documentElement.classList.add('mini-program');"
+    f'document.title={json.dumps(MINIAPP_TITLE)};}}'
+)
 _STYLE = """
 :root{color-scheme:light dark;--fg:#171717;--muted:#6b7280;--bg:#fff;--card:#f9fafb;--line:#e5e7eb;
 --accent:#171717;--on-accent:#fff}

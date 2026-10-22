@@ -2,6 +2,9 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
+		<!-- loboo fork: the title until /api/config answers with WEBUI_NAME (see APP_NAME in
+		src/lib/constants.ts). It comes before the mini program script below, which pins it there. -->
+		<title>LoboOS</title>
 		<!-- LICENSE covers this Open WebUI branding surface, including name, logo,
 		visual, textual, symbolic identifiers, metadata, and surrounding UI.
 		Do not alter, remove, obscure, or replace it except as LICENSE permits:
@@ -47,11 +50,19 @@
 		<script>
 			// loboo fork: inside the WeChat mini program the theme follows the mini program, which is light only
 			// (Loboo's own pages do the same), so "system" never resolves to dark there. Explicit themes still apply.
+			// Its navigation bar shows the page title, which stays the entry's name (问一问 on the mini program home,
+			// as in backend/open_webui/loboo/pages.py): the titles pages set while you use the site are dropped.
 			if (/miniProgram/i.test(navigator.userAgent)) {
 				document.documentElement.classList.add('mini-program');
 				const matchMedia = window.matchMedia.bind(window);
 				window.matchMedia = (query) =>
 					matchMedia(/prefers-color-scheme\s*:\s*dark/i.test(query) ? 'not all' : query);
+				document.title = '问一问';
+				Object.defineProperty(document, 'title', {
+					configurable: true,
+					get: () => '问一问',
+					set() {}
+				});
 			}
 		</script>
 		<style>
@@ -145,8 +156,6 @@
 				});
 			})();
 		</script>
-
-		<title>Open WebUI</title>
 
 		%sveltekit.head%
 	</head>

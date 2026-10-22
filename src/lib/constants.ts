@@ -4,7 +4,9 @@
 // visual, textual, symbolic identifiers, metadata, and surrounding UI.
 // Do not alter, remove, obscure, or replace it except as LICENSE permits:
 // https://docs.openwebui.com/license.
-export const APP_NAME = 'Open WebUI';
+// loboo fork: the name shown until /api/config answers with WEBUI_NAME; keep it equal to the deployed
+// WEBUI_NAME so the title and sidebar don't change while the page starts (src/app.html's <title> too).
+export const APP_NAME = 'LoboOS';
 
 export const WEBUI_HOSTNAME = '';
 export const WEBUI_BASE_URL = '';
