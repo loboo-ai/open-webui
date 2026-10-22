@@ -27,6 +27,7 @@ from open_webui.constants import ERROR_MESSAGES
 from open_webui.env import AIOHTTP_CLIENT_ALLOW_REDIRECTS, AIOHTTP_CLIENT_SESSION_SSL, ENABLE_FORWARD_USER_INFO_HEADERS
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
+from open_webui.loboo import hooks as loboo_hooks
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
 from open_webui.retrieval.web.utils import get_ssrf_safe_session, validate_url
@@ -622,11 +623,17 @@ async def image_generations(
     metadata = metadata or {}
 
     model = await get_image_model(request)
+    # loboo fork: the member's own key when the backend is the CPA. Resolved outside the try below,
+    # which would turn a refusal's Chinese reason into a generic 400.
+    api_key = image_config.IMAGES_OPENAI_API_KEY
+    if image_config.IMAGE_GENERATION_ENGINE == 'openai':
+        member_key = await loboo_hooks.image_key(image_config.IMAGES_OPENAI_API_BASE_URL, user)
+        api_key = api_key if member_key is None else member_key
 
     try:
         if image_config.IMAGE_GENERATION_ENGINE == 'openai':
             headers = {
-                'Authorization': f'Bearer {image_config.IMAGES_OPENAI_API_KEY}',
+                'Authorization': f'Bearer {api_key}',
                 'Content-Type': 'application/json',
             }
 
@@ -917,6 +924,11 @@ async def image_edits(
         width, height = tuple(map(int, size.split('x')))
 
     model = image_config.IMAGE_EDIT_MODEL if form_data.model is None else form_data.model
+    # loboo fork: as in image_generations.
+    api_key = image_config.IMAGES_EDIT_OPENAI_API_KEY
+    if image_config.IMAGE_EDIT_ENGINE == 'openai':
+        member_key = await loboo_hooks.image_key(image_config.IMAGES_EDIT_OPENAI_API_BASE_URL, user)
+        api_key = api_key if member_key is None else member_key
 
     try:
 
@@ -983,7 +995,7 @@ async def image_edits(
     try:
         if image_config.IMAGE_EDIT_ENGINE == 'openai':
             headers = {
-                'Authorization': f'Bearer {image_config.IMAGES_EDIT_OPENAI_API_KEY}',
+                'Authorization': f'Bearer {api_key}',
             }
 
             if ENABLE_FORWARD_USER_INFO_HEADERS:

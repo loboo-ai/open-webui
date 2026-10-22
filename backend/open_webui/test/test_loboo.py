@@ -1,12 +1,16 @@
+import base64
+import io
 import json
 import re
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from open_webui.loboo import config, credentials, pages
+from open_webui.loboo import config, credentials, hooks, pages
 from open_webui.loboo.router import safe_next
+from open_webui.routers import images
 from open_webui.utils.headers import get_headers_and_cookies
+from PIL import Image
 
 
 @pytest.mark.parametrize(
@@ -91,3 +95,81 @@ async def test_loboo_connection_sends_only_the_member_key(monkeypatch):
         with pytest.raises(HTTPException) as raised:
             await authorization(url, user)
         assert raised.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_loboo_images_use_the_member_key(monkeypatch):
+    monkeypatch.setattr(config, 'ENABLED', True)
+    monkeypatch.setattr(config, 'LOBOO_CPA_BASE_URL', 'https://cpa.example/v1')
+
+    async def key_for(user):
+        if user.id == 'no-key':
+            raise HTTPException(status_code=403, detail='Codex 未开通')
+        return f'key-of-{user.id}'
+
+    monkeypatch.setattr(credentials, 'key_for', key_for)
+    user = SimpleNamespace(id='u1', name='n', email='e', role='user')
+    keyless = SimpleNamespace(id='no-key', name='n', email='e', role='user')
+
+    async def refusal(call, who):
+        with pytest.raises(HTTPException) as raised:
+            await call(who)
+        return raised.value.status_code, raised.value.detail
+
+    # CPA 地址用本人的 Key（大小写、末尾的 / 不影响）；别的图片后台返回 None，照旧用后台填的 Key。
+    assert await hooks.image_key('https://CPA.example/v1/', user) == 'key-of-u1'
+    assert await hooks.image_key('https://other.example/v1', user) is None
+    assert await hooks.image_key('https://cpa.example/v10', user) is None
+    assert (await refusal(lambda who: hooks.image_key('https://cpa.example/v1', who), None))[0] == 401
+
+    image_config = SimpleNamespace(
+        IMAGE_GENERATION_ENGINE='openai',
+        IMAGE_GENERATION_MODEL='gpt-image-2',
+        IMAGE_SIZE='',
+        IMAGES_OPENAI_API_BASE_URL='https://cpa.example/v1',
+        IMAGES_OPENAI_API_KEY='admin-key',
+        IMAGES_OPENAI_API_VERSION='',
+        IMAGES_OPENAI_API_PARAMS=None,
+        IMAGE_EDIT_ENGINE='openai',
+        IMAGE_EDIT_MODEL='gpt-image-2',
+        IMAGE_EDIT_SIZE='',
+        IMAGES_EDIT_OPENAI_API_BASE_URL='https://cpa.example/v1',
+        IMAGES_EDIT_OPENAI_API_KEY='admin-key',
+        IMAGES_EDIT_OPENAI_API_VERSION='',
+    )
+    sent = []
+
+    class Session:
+        def post(self, url, headers=None, **kwargs):
+            sent.append((url, headers['Authorization']))
+            raise RuntimeError('stop before the network')
+
+    async def get_image_config():
+        return image_config
+
+    async def get_session():
+        return Session()
+
+    monkeypatch.setattr(images, 'get_image_config', get_image_config)
+    monkeypatch.setattr(images, 'get_session', get_session)
+    png = io.BytesIO()
+    Image.new('RGB', (1, 1)).save(png, 'PNG')
+    picture = 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode()
+
+    async def generate(who):
+        return await images.image_generations(None, images.CreateImageForm(prompt='a cat'), user=who)
+
+    async def edit(who):
+        return await images.image_edits(None, images.EditImageForm(prompt='a hat', image=picture), user=who)
+
+    # 生成和编辑都带本人的 Key，后台填的那把不用（假会话在发出前停下，上游代码把它报成 400）。
+    assert (await refusal(generate, user))[0] == 400
+    assert (await refusal(edit, user))[0] == 400
+    assert sent == [
+        ('https://cpa.example/v1/images/generations', 'Bearer key-of-u1'),
+        ('https://cpa.example/v1/images/edits', 'Bearer key-of-u1'),
+    ]
+    # 没有 Key 的人原样拿到原因（会显示在对话里），不被包成 400，也不发请求。
+    assert await refusal(generate, keyless) == (403, 'Codex 未开通')
+    assert await refusal(edit, keyless) == (403, 'Codex 未开通')
+    assert len(sent) == 2

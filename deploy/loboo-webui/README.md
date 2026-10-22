@@ -1,6 +1,6 @@
 # loboo-webui 部署与运维
 
-loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com`；小程序里用 `https://m.haina-api.net`（小程序只能打开它后台配置的业务域名，业务域名要求已备案）。两个域名是同一个服务。萝卜服务首页和小程序首页的「ChatGPT」卡片免密进入这里，对话用成员本人的 CPA Key。萝卜接入的代码在 `backend/open_webui/loboo/`。
+loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com`；小程序里用 `https://m.haina-api.net`（小程序只能打开它后台配置的业务域名，业务域名要求已备案）。两个域名是同一个服务。萝卜服务首页的「ChatGPT」卡片和小程序首页的「问一问」免密进入这里，对话、生成和编辑图片都用成员本人的 CPA Key。萝卜接入的代码在 `backend/open_webui/loboo/`。
 
 ## 布局
 
@@ -25,6 +25,7 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 - systemd 单元 `loboo-webui`（`loboo-webui.service`），uvicorn 单进程监听 `172.17.0.1:18120`。萝卜 Key 缓存在进程内，不能开多个 worker。
 - openresty 的 `m.loboo-ai.com`、`m.haina-api.net` 两个站点都转发到这个端口，要透传 WebSocket（`Upgrade`、`Connection`），不缓冲响应，读超时放长。新增对外域名时，同时加进 `CORS_ALLOW_ORIGIN`，并在根目录放小程序业务域名的校验文件。
 - 模型连接在管理后台配：地址 `https://ootd.haina-api.net/v1`，key 留空，`auth_type` 为 `loboo`，不填模型 ID（从 CPA 动态拉取）。key 留空时，就算有人在界面上把认证方式改掉，最坏也只是不带 key，不会用错别人的 key。
+- 图片生成和编辑在管理后台「图像」里配，两边都选 OpenAI：地址同上，key 留空，模型 `gpt-image-2`，尺寸留空（不传尺寸，由模型决定）。地址是 CPA 时一律用本人的 Key，后台填的 key 不会用到；没开通 Codex 的人看到的提示和对话里一样。成员在输入框打开「图像」后，模型按需调用生成或编辑。
 
 ## 日常操作
 

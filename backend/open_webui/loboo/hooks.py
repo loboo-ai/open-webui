@@ -1,4 +1,4 @@
-"""上游代码调用的三个入口：密码登录、整页打开、给模型连接取 Key。没配置萝卜服务时都不做事。"""
+"""上游代码调用的入口：密码登录、整页打开、给模型连接和图片生成取 Key。没配置萝卜服务时都不做事。"""
 
 import logging
 
@@ -43,14 +43,13 @@ async def connection_key(url: str, user: UserModel | None) -> str | None:
     最近取到的别人的 Key。CPA 不按 Key 区分模型，列表对谁都一样；模型注册表是全局的，某次列表拉空了，
     别人对话也会报 Model not found。拉列表不计额度。
     """
-    base = config.LOBOO_CPA_BASE_URL
     target = config.normalize_url(url)
-    if not config.ENABLED or not base or not (target == base or target.startswith(base + '/')):
+    if not _within_cpa(target):
         log.error('loboo: refusing to send a member key to %s', url)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail='模型连接配置有误，请联系管理员。'
         )
-    if target == base + '/models':
+    if target == config.LOBOO_CPA_BASE_URL + '/models':
         if user is not None:
             try:
                 return await credentials.key_for(user)
@@ -60,3 +59,21 @@ async def connection_key(url: str, user: UserModel | None) -> str | None:
     if user is None:
         return None
     return await credentials.key_for(user)
+
+
+async def image_key(base_url: str, user: UserModel | None) -> str | None:
+    """
+    图片生成、编辑用的 Key。接入地址是 LOBOO_CPA_BASE_URL 或其下的路径时用本人的 Key（和对话同一把），
+    取不到就报原因，不退回后台填的 Key；其他图片后台返回 None，照旧用后台填的 Key。
+    """
+    if not _within_cpa(config.normalize_url(base_url)):
+        return None
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='请重新登录后再试。')
+    return await credentials.key_for(user)
+
+
+def _within_cpa(target: str) -> bool:
+    """target 是规范化后的地址：CPA 接入地址本身或其下的路径。"""
+    base = config.LOBOO_CPA_BASE_URL
+    return bool(config.ENABLED and base and (target == base or target.startswith(base + '/')))
