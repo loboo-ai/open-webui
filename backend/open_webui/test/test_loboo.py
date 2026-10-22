@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from open_webui.loboo import client, config, credentials, hooks, identity, pages
+from open_webui.loboo import client, config, credentials, hooks, identity, model_logos, pages
 from open_webui.loboo import router as sso_router
 from open_webui.loboo.router import safe_next
 from open_webui.routers import images
@@ -224,3 +224,17 @@ async def test_loboo_sso_redeems_only_once_the_page_runs(monkeypatch):
     cross_site = await sso_router.sso_redeem(request('POST', origin='https://evil.example'), 't4', '/', basis, None)
     assert cross_site.status_code == 403 and redeemed == ['t1', 't3']
     assert 'href="https://service.loboo-ai.com/account/">回萝卜重新进入' in cross_site.body.decode()
+
+
+def test_model_logo_follows_the_vendor_the_connection_reports():
+    registry = {
+        'claude-opus-5.5': {'owned_by': 'openai', 'openai': {'id': 'claude-opus-5.5', 'owned_by': 'anthropic'}},
+        'gpt-6.1-sol': {'owned_by': 'openai', 'openai': {'id': 'gpt-6.1-sol', 'owned_by': 'openai'}},
+        'my-helper': {'owned_by': 'openai', 'info': {'base_model_id': 'claude-opus-5.5'}},
+        'mystery': {'owned_by': 'openai', 'openai': {'id': 'mystery', 'owned_by': 'acme'}},
+    }
+    assert model_logos.logo_url(registry, 'claude-opus-5.5') == '/static/models/anthropic.svg'
+    assert model_logos.logo_url(registry, 'gpt-6.1-sol') == '/static/models/openai.svg'
+    assert model_logos.logo_url(registry, 'my-helper') == '/static/models/anthropic.svg'
+    assert model_logos.logo_url(registry, 'mystery') == model_logos.UNKNOWN
+    assert model_logos.logo_url(registry, 'gone') == model_logos.UNKNOWN

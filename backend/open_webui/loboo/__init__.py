@@ -2,5 +2,6 @@
 
 萝卜服务是账号与 Key 的唯一来源；这里只在进程内缓存 Key，不写库、不进浏览器。
 挂进上游的位置只有 main.py（挂路由）、utils/headers.py（auth_type='loboo'）、
-routers/auths.py（密码登录与整页打开时取配置）。
+routers/auths.py（密码登录与整页打开时取配置）、routers/images.py（图片用本人的 Key）、
+routers/models.py（模型头像回落到厂商标识，见 model_logos.py）。
 """

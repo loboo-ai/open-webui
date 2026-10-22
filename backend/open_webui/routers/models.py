@@ -28,6 +28,7 @@ from open_webui.env import (
 )
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_session
+from open_webui.loboo import model_logos
 from open_webui.models.access_grants import AccessGrants, normalize_access_grants
 from open_webui.models.config import Config
 from open_webui.models.files import Files
@@ -998,6 +999,9 @@ async def get_model_profile_image(
     updated_at = None
 
     bypass_access_control = BYPASS_MODEL_ACCESS_CONTROL or (user.role == 'admin' and BYPASS_ADMIN_ACCESS_CONTROL)
+    # loboo fork: only callers who may see the model get its vendor's logo below; the rest get the
+    # generic one, so the vendor doesn't make ids probeable either.
+    visible = bypass_access_control
 
     # First, check the database for regular models
     model_meta = await Models.get_model_meta_by_id(id, db=db)
@@ -1015,6 +1019,7 @@ async def get_model_profile_image(
                 db=db,
             )
         ):
+            visible = True
             profile_image_url = (meta or {}).get('profile_image_url')
             updated_at = model_updated_at
 
@@ -1082,11 +1087,10 @@ async def get_model_profile_image(
                     status_code=status.HTTP_302_FOUND,
                 )
 
-    # LICENSE covers this Open WebUI fallback logo.
-    # Do not alter, remove, obscure, or replace it except as LICENSE permits:
-    # https://docs.openwebui.com/license.
+    # loboo fork: without an image of its own a model shows its vendor's logo, not the site logo
+    # (which is 萝卜哥's avatar); see backend/open_webui/loboo/model_logos.py.
     return RedirectResponse(
-        url='/static/favicon.png',
+        url=model_logos.logo_url(request.app.state.MODELS, id) if visible else model_logos.UNKNOWN,
         status_code=status.HTTP_302_FOUND,
     )
 
