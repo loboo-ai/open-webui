@@ -45,6 +45,16 @@
 		</script>
 
 		<script>
+			// loboo fork: inside the WeChat mini program the theme follows the mini program, which is light only
+			// (Loboo's own pages do the same), so "system" never resolves to dark there. Explicit themes still apply.
+			if (/miniProgram/i.test(navigator.userAgent)) {
+				const matchMedia = window.matchMedia.bind(window);
+				window.matchMedia = (query) =>
+					matchMedia(/prefers-color-scheme\s*:\s*dark/i.test(query) ? 'not all' : query);
+			}
+		</script>
+
+		<script>
 			// On page load or when changing themes, best to add inline in `head` to avoid FOUC
 			(() => {
 				const metaThemeColorTag = document.querySelector('meta[name="theme-color"]');
