@@ -1,10 +1,10 @@
-"""上游代码调用的入口：密码登录、整页打开、给模型连接和图片生成取 Key。没配置萝卜服务时都不做事。"""
+"""上游代码调用的入口：密码登录、整页打开、给模型连接和图片生成取 Key、对话带上终端。没配置萝卜服务时都不做事。"""
 
 import logging
 
 from fastapi import HTTPException, status
 
-from open_webui.loboo import client, config, credentials
+from open_webui.loboo import client, cloud, config, credentials
 from open_webui.models.users import UserModel
 
 log = logging.getLogger(__name__)
@@ -71,6 +71,13 @@ async def image_key(base_url: str, user: UserModel | None) -> str | None:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='请重新登录后再试。')
     return await credentials.key_for(user)
+
+
+async def on_terminal_tools(request, user: UserModel, terminal_id: str, metadata: dict) -> None:
+    """对话已带上终端的工具：萝卜云里给 loboo-cli 放好本人的 Key（见 cloud.py）。不会让对话失败。"""
+    if not config.ENABLED:
+        return
+    await cloud.provide_cli_key(request, user, terminal_id, metadata)
 
 
 def _within_cpa(target: str) -> bool:

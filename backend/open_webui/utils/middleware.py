@@ -3150,6 +3150,11 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 log.exception(e)
                 raise HTTPException(status_code=503, detail=f'Terminal unavailable: {e}') from e
 
+            # loboo fork: 萝卜云 hands loboo-cli the member's key; it never fails the chat.
+            from open_webui.loboo.hooks import on_terminal_tools
+
+            await on_terminal_tools(request, user, terminal_id, metadata)
+
         if direct_tool_servers:
             for tool_server in direct_tool_servers:
                 if tool_server.get('is_terminal') is True and not terminal_capability:

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from open_webui.loboo import client, config, credentials, hooks, identity, model_logos, pages, web_search
+from open_webui.loboo import client, cloud, config, credentials, hooks, identity, model_logos, pages, web_search
 from open_webui.loboo import router as sso_router
 from open_webui.loboo.router import safe_next
 from open_webui.routers import images
@@ -53,6 +53,62 @@ def test_pages_escape_dynamic_text():
     confirm = pages.confirm('<img src=x onerror=alert(1)>', 'a@loboo.ai', 'g"rant', '/"><b>').body.decode()
     assert '<img' not in confirm and '"><b>' not in confirm
     assert 'value="g&quot;rant"' in confirm
+
+
+@pytest.mark.asyncio
+async def test_loboo_cloud_gives_loboo_cli_the_member_key_only_in_per_user_terminals(monkeypatch):
+    from open_webui.models.config import Config
+
+    monkeypatch.setattr(config, 'ENABLED', True)
+    connections = [
+        {
+            'id': 'cloud',
+            'url': 'http://orchestrator',
+            'key': 'k',
+            'auth_type': 'bearer',
+            'server_type': 'orchestrator',
+            'policy_id': 'loboo',
+        },
+        {'id': 'shared', 'url': 'http://open-terminal', 'key': 'k', 'auth_type': 'bearer'},
+    ]
+
+    async def get(key, default=None):
+        return connections if key == 'terminal_server.connections' else default
+
+    monkeypatch.setattr(Config, 'get', staticmethod(get))
+
+    async def key_for(user):
+        if user.id == 'no-key':
+            raise HTTPException(status_code=403, detail='Codex 未开通')
+        return f'key-of-{user.id}'
+
+    monkeypatch.setattr(credentials, 'key_for', key_for)
+    writes = []
+
+    async def write_file(url, headers, cookies, path, content, **kwargs):
+        writes.append((url, headers['X-User-Id'], path, json.loads(content)))
+
+    monkeypatch.setattr(cloud, 'write_file', write_file)
+    monkeypatch.setattr(cloud, '_written', {})
+    request = SimpleNamespace(cookies={}, state=SimpleNamespace())
+    user = SimpleNamespace(id='u1', name='n', email='e', role='user')
+    keyless = SimpleNamespace(id='no-key', name='n', email='e', role='user')
+
+    # 每人一个容器的终端：Key 写进本人 home，loboo-cli 用它换会话；缓存期内同一个 Key 不重复写。
+    await hooks.on_terminal_tools(request, user, 'cloud', {'chat_id': 'c1'})
+    await hooks.on_terminal_tools(request, user, 'cloud', {'chat_id': 'c2'})
+    assert writes == [
+        (
+            'http://orchestrator/p/loboo/files/write',
+            'u1',
+            '/home/user/.codex/auth.json',
+            {'OPENAI_API_KEY': 'key-of-u1'},
+        )
+    ]
+    # 可能多人共用的普通终端、没有 Key 的人：都不写。
+    await hooks.on_terminal_tools(request, user, 'shared', {})
+    await hooks.on_terminal_tools(request, keyless, 'cloud', {})
+    assert len(writes) == 1
 
 
 @pytest.mark.asyncio
