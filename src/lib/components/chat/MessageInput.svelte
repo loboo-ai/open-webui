@@ -74,7 +74,7 @@
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 	import { matchKeybinding, Shortcut } from '$lib/shortcuts';
 	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
-	import { IMAGE_TOGGLE_LABEL } from '$lib/loboo';
+	import { IMAGE_TOGGLE_LABEL, chatCloudTerminal } from '$lib/loboo';
 
 	import { createNoteHandler } from '../notes/utils';
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
@@ -819,6 +819,8 @@
 			(hasDirectToolServerAccess &&
 				(($terminalServers ?? []).some((t) => !t.id) ||
 					($settings?.terminalServers ?? []).some((s) => s.url))));
+	let cloudTerminal = null;
+	$: cloudTerminal = chatCloudTerminal(selectedModelIds, $models, $terminalServers);
 
 	let toggleFilters = [];
 	$: toggleFilters = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels)
@@ -2598,7 +2600,8 @@
 										{/if}
 
 										<!-- Terminal Server Selector -->
-										{#if showTerminalSelector}
+										<!-- loboo fork: with the cloud terminal, the cloud switch beside 临时对话 (Navbar) is the control. -->
+										{#if showTerminalSelector && !cloudTerminal}
 											<TerminalMenu
 												bind:show={showTerminalMenu}
 												disabled={generating ||

@@ -8,12 +8,16 @@
 		chatId,
 		config,
 		mobile,
+		models,
+		selectedTerminalId,
 		settings,
 		showControls,
 		showSidebar,
 		temporaryChatEnabled,
+		terminalServers,
 		user
 	} from '$lib/stores';
+	import { chatCloudTerminal } from '$lib/loboo';
 
 	import { slide } from 'svelte/transition';
 	import { page } from '$app/stores';
@@ -35,6 +39,7 @@
 	import ChatPlus from '../icons/ChatPlus.svelte';
 	import ChatCheck from '../icons/ChatCheck.svelte';
 	import Knobs from '../icons/Knobs.svelte';
+	import Cloud from '../icons/Cloud.svelte';
 	import { isTemporaryChatId } from '$lib/utils/chatId';
 
 	const i18n: any = getContext('i18n');
@@ -65,6 +70,11 @@
 
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
+
+	// loboo fork: the 萝卜云 switch beside 临时对话, lit while the chat runs with it (see chatCloudTerminal).
+	let cloudTerminal = null;
+	$: cloudTerminal = chatCloudTerminal(chat?.chat?.models ?? [], $models, $terminalServers);
+	$: cloudOn = !!cloudTerminal && $selectedTerminalId === cloudTerminal.id;
 </script>
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
@@ -176,6 +186,24 @@
 
 				<div class="lg:mr-1 flex flex-none items-center gap-2 self-center">
 					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
+
+					{#if cloudTerminal && !readOnly}
+						<Tooltip
+							content={`${cloudTerminal.name || cloudTerminal.id}${cloudOn ? '已开启' : '已关闭'}`}
+						>
+							<button
+								class="flex size-6 cursor-pointer items-center justify-center rounded-lg transition hover:bg-gray-50/40 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-gray-800/40 {cloudOn
+									? 'text-sky-500 dark:text-sky-400'
+									: 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}"
+								aria-label={cloudTerminal.name || cloudTerminal.id}
+								aria-pressed={cloudOn}
+								disabled={!!history?.currentId && history.messages[history.currentId]?.done != true}
+								on:click={() => selectedTerminalId.set(cloudOn ? null : cloudTerminal.id)}
+							>
+								<Cloud className="size-4.5" strokeWidth="1.5" />
+							</button>
+						</Tooltip>
+					{/if}
 
 					{#if $user?.role === 'user' ? ($user?.permissions?.chat?.temporary ?? true) && !($user?.permissions?.chat?.temporary_enforced ?? false) : true}
 						{#if !chat?.id}
