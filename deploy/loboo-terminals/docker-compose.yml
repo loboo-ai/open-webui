@@ -14,10 +14,20 @@
 # 终端镜像 loboo/open-terminal 用 image/build.sh 在本机构建（官方镜像加中文字体、loboo-cli 与技能）。
 name: loboo-terminals
 
+# Terminals 0.2.5 每转发一个请求都会在日志里多打一条约 41 KB 的报错堆栈（请求本身成功），而 Docker 默认不轮转。
+# local 驱动压缩轮转出去的文件（这类日志实测约 10 倍），每个服务最多约 95 MB。调高 TERMINALS_LOG_LEVEL 压不住它：
+# 这条是 ERROR 级，而 WARNING 及以上会把成员容器的日志整个关掉。
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "50m"
+    max-file: "10"
+
 services:
   socket-proxy:
     image: tecnativa/docker-socket-proxy:v0.4.1
     restart: unless-stopped
+    logging: *logging
     environment:
       CONTAINERS: 1
       POST: 1
@@ -28,6 +38,7 @@ services:
   terminals:
     image: ghcr.io/open-webui/terminals:0.2.5
     restart: unless-stopped
+    logging: *logging
     depends_on: [socket-proxy]
     env_file: .env # TERMINALS_API_KEY
     environment:

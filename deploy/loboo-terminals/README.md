@@ -102,6 +102,7 @@ du -sh data/terminals/*                   # 每个人的 home 大小
 ```
 
 - **编排服务一停，所有开着萝卜云的对话都会报错**（"Terminal unavailable" / "Cannot connect to host 127.0.0.1:18210"），成员点右上角的云图标关掉就能继续。重启、换镜像都挑人少的时候，几秒到十几秒。
+- 日志：编排服务和 socket-proxy 用 `local` 驱动轮转（compose 里的 `x-logging`，50m × 10，每个服务最多约 95 MB）。Terminals 0.2.5 每转发一个请求都会多打一条约 41 KB 的 `AttributeError` 堆栈（`BackgroundTasks` 用法与镜像里的 FastAPI 不兼容，请求本身成功），看拉起和回收时用 `docker compose logs --since 1h terminals | grep -E 'Provision|Reap'`。成员容器的日志随容器删除。
 - 容器在用到时才拉起：发出一条开着萝卜云的消息、打开文件面板、输入 `/`。冷启动约 3.5 秒，热请求约 20 毫秒，空闲容器约 65 MiB。空闲 15 分钟停掉并删除容器，home 保留。
 - 改策略：编辑 `policy-loboo.json`，然后
   ```sh
@@ -135,7 +136,7 @@ du -sh data/terminals/*                   # 每个人的 home 大小
 按顺序做，每步都可以重复执行：
 
 1. **先有 INPUT 默认 DROP。** 恢复 iptables-manager 的 `/etc/iptables/rules.v4` 和 `iptables-manager-restore.service`（或者等价的 INPUT 默认 DROP，只放行对公网开放的端口）。没有这一步，终端能连到宿主机监听的所有端口。
-2. 装 Docker；准备 loboo-mono 检出（`/opt/gits/loboo-mono`，构建镜像要用）。
+2. 装 Docker，第一次启动 dockerd 之前在 `/etc/docker/daemon.json` 写上 `{"log-driver": "local"}`，让所有容器（包括成员容器）的日志默认轮转；以后再改要重启 Docker，而没开 live-restore 时那会停掉所有容器。准备 loboo-mono 检出（`/opt/gits/loboo-mono`，构建镜像要用）。
 3. 建网络。网段要在 172.16.0.0/12 之外，也不能和新机器上已有的路由冲突（先看 `ip -4 route`）：
    ```sh
    docker network create --driver bridge --subnet 10.89.0.0/22 --gateway 10.89.0.1 \
