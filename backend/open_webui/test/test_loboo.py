@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from open_webui.loboo import client, config, credentials, hooks, identity, model_logos, pages
+from open_webui.loboo import client, config, credentials, hooks, identity, model_logos, pages, web_search
 from open_webui.loboo import router as sso_router
 from open_webui.loboo.router import safe_next
 from open_webui.routers import images
@@ -238,3 +238,110 @@ def test_model_logo_follows_the_vendor_the_connection_reports():
     assert model_logos.logo_url(registry, 'my-helper') == '/static/models/anthropic.svg'
     assert model_logos.logo_url(registry, 'mystery') == model_logos.UNKNOWN
     assert model_logos.logo_url(registry, 'gone') == model_logos.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
+    monkeypatch.setattr(config, 'ENABLED', True)
+    monkeypatch.setattr(config, 'LOBOO_CPA_BASE_URL', 'https://cpa.example/v1')
+    monkeypatch.setattr(config, 'LOBOO_SEARCH_MODEL', 'gpt-search')
+
+    async def key_for(user):
+        return f'key-of-{user.id}'
+
+    monkeypatch.setattr(credentials, 'key_for', key_for)
+    text = '- 上海今天有雨（[A 站](https://a.example/1?utm_source=openai)）\n- 气温 20℃ [天气网](https://c.example/3)'
+    searched = {
+        'output': [
+            {
+                'type': 'web_search_call',
+                'status': 'completed',
+                'action': {
+                    'type': 'search',
+                    'sources': [
+                        {'type': 'url', 'url': 'https://b.example/2'},
+                        {'type': 'url', 'url': 'https://c.example/3'},
+                        {'type': 'api', 'name': 'oai-weather'},
+                    ],
+                },
+            },
+            {
+                'type': 'message',
+                'content': [
+                    {
+                        'type': 'output_text',
+                        'text': text,
+                        'annotations': [
+                            {'type': 'url_citation', 'url': 'https://a.example/1?utm_source=openai', 'title': 'A 站'}
+                        ],
+                    }
+                ],
+            },
+        ]
+    }
+    from_memory = {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': '凭记忆：可能有雨'}]}]}
+    replies, sent, events = [], [], {}
+
+    class Response:
+        def __init__(self, status, data):
+            self.status, self.data = status, data
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def json(self, content_type=None):
+            return self.data
+
+    class Session:
+        def post(self, url, json=None, headers=None, **kwargs):
+            sent.append((url, headers['Authorization'], json))
+            return Response(*replies.pop(0))
+
+    async def get_session():
+        return Session()
+
+    async def emit(event):
+        events.setdefault(event['type'], []).append(event['data'])
+
+    monkeypatch.setattr(web_search, 'get_session', get_session)
+    member = {'id': 'u1', 'email': 'a@loboo.ai', 'name': 'n', 'role': 'user'} | dict.fromkeys(
+        ('last_active_at', 'updated_at', 'created_at'), 0
+    )
+
+    async def ask(*answers):
+        replies[:], sent[:] = list(answers), []
+        events.clear()
+        messages = [{'role': 'user', 'content': '上海明天要带伞吗'}]
+        return await web_search.search_internet(
+            '上海今天天气', __user__=member, __event_emitter__=emit, __messages__=messages
+        )
+
+    # 渠道没有真正搜索（工具被去掉、凭记忆作答）时不用它的话，换一次渠道；用本人的 Key 发给 CPA 上的 GPT 强制搜索。
+    result = await ask((200, from_memory), (200, searched))
+    assert result.startswith('联网搜索结果（搜索时间：北京时间 ') and result.endswith(f'\n\n{text}')
+    assert [(url, key) for url, key, _ in sent] == [('https://cpa.example/v1/responses', 'Bearer key-of-u1')] * 2
+    body = sent[0][2]
+    assert (body['model'], body['tool_choice'], body['tools'][0]['type']) == ('gpt-search', 'required', 'web_search')
+    # 用户的原话一并带上：对话模型转述时可能把"明天"写错。
+    assert body['input'][0]['content'][0]['text'] == '用户的原话：上海明天要带伞吗\n\n要查的：上海今天天气'
+    # 状态条先显示搜索词，再列出搜过的网站：引用的在前、带标题，去掉 utm_source 后同一网页只列一次。
+    # 引用的网页另作引用来源。
+    assert events['status'][0] == {'action': 'web_search_queries_generated', 'queries': ['上海今天天气'], 'done': False}
+    assert events['status'][1]['items'] == [
+        {'title': 'A 站', 'link': 'https://a.example/1'},
+        {'title': '天气网', 'link': 'https://c.example/3'},
+        {'link': 'https://b.example/2'},
+    ]
+    sources = events['source']
+    assert [source['metadata'][0]['source'] for source in sources] == ['https://a.example/1', 'https://c.example/3']
+    assert sources[1]['document'] == ['- 气温 20℃ [天气网](https://c.example/3)']
+
+    # 两次都没有真正搜索：如实报不可用，不把凭记忆写的内容当结果。
+    assert json.loads(await ask((200, from_memory), (502, {}))) == {'error': web_search.UNAVAILABLE}
+    assert len(sent) == 2 and events['status'][-1]['error'] is True
+    # 额度用完、请求太快：不再换渠道重试。
+    assert json.loads(await ask((429, {'error': 'rate limited'}))) == {'error': web_search.THROTTLED}
+    assert len(sent) == 1

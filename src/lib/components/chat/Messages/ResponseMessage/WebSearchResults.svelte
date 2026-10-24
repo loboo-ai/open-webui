@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { safeLinkUrl } from '$lib/utils';
+	import { faviconUrl } from '$lib/loboo';
 
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
@@ -68,9 +69,10 @@
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">
 							<img
-								src="https://www.google.com/s2/favicons?sz=32&domain={item.link}"
+								src={faviconUrl(item.link)}
 								alt="{item?.title ?? item.link} favicon"
 								class="size-3.5"
+								on:error={(e) => (e.currentTarget.style.visibility = 'hidden')}
 							/>
 						</div>
 
@@ -108,9 +110,10 @@
 					<div class=" flex justify-center items-center gap-3">
 						<div class="w-fit">
 							<img
-								src="https://www.google.com/s2/favicons?sz=32&domain={url}"
+								src={faviconUrl(url)}
 								alt="{url} favicon"
 								class="size-3.5"
+								on:error={(e) => (e.currentTarget.style.visibility = 'hidden')}
 							/>
 						</div>
 

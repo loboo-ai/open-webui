@@ -1,5 +1,7 @@
 import { encode } from 'html-entities';
 
+import { STATUS_ONLY_TOOLS } from '$lib/loboo';
+
 export type OutputContentPart = {
 	type?: string;
 	text?: unknown;
@@ -398,6 +400,11 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			item.name === 'ask_user' &&
 			(item.status === 'pending' || item.status === 'in_progress')
 		) {
+			return;
+		}
+
+		// loboo fork: these tools are shown in the status line instead.
+		if (item.type === 'function_call' && STATUS_ONLY_TOOLS.has(item.name ?? '')) {
 			return;
 		}
 

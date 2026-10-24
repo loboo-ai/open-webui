@@ -790,13 +790,6 @@
 		modelCapabilitiesById
 	);
 
-	let webSearchCapableModels = [];
-	$: webSearchCapableModels = getCapableModelIds(
-		selectedModelIds,
-		'web_search',
-		modelCapabilitiesById
-	);
-
 	let imageGenerationCapableModels = [];
 	$: imageGenerationCapableModels = getCapableModelIds(
 		selectedModelIds,
@@ -840,11 +833,9 @@
 		($skills ?? []).some((skill) => skill.is_active) ||
 		($terminalSkills ?? []).some((skill) => skill.is_active);
 
-	let showWebSearchButton = false;
-	$: showWebSearchButton =
-		selectedModelIds.length === webSearchCapableModels.length &&
-		$config?.features?.enable_web_search &&
-		($_user.role === 'admin' || $_user?.permissions?.features?.web_search);
+	// loboo fork: web search has no switch; the backend offers it to every model and the model decides when to
+	// search (utils/tools.py).
+	const showWebSearchButton = false;
 
 	let showImageGenerationButton = false;
 	$: showImageGenerationButton =

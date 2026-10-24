@@ -16,6 +16,8 @@ LOBOO_SERVICE_URL = os.environ.get('LOBOO_SERVICE_URL', '').strip().rstrip('/')
 LOBOO_SERVICE_TOKEN = os.environ.get('LOBOO_SERVICE_TOKEN', '').strip()
 # 只有发往这个地址的连接才带上萝卜下发的 Key，如 https://ootd.haina-api.net/v1。
 LOBOO_CPA_BASE_URL = normalize_url(os.environ['LOBOO_CPA_BASE_URL']) if os.environ.get('LOBOO_CPA_BASE_URL') else ''
+# 联网搜索由 CPA 上的哪个模型用原生 web_search 工具执行；要选 CPA 上有渠道支持原生搜索的 GPT 模型。
+LOBOO_SEARCH_MODEL = os.environ.get('LOBOO_SEARCH_MODEL', '').strip() or 'gpt-6.1-sol'
 # 取到的配置用多久再重新取；萝卜服务不可达时，旧的 Key 最多再用多久。
 KEY_CACHE_TTL_SECONDS = int(os.environ.get('LOBOO_KEY_CACHE_TTL_SECONDS', '600'))
 STALE_MAX_SECONDS = int(os.environ.get('LOBOO_STALE_MAX_SECONDS', '21600'))

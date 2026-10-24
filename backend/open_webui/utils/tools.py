@@ -40,6 +40,7 @@ from open_webui.env import (
     FORWARD_SESSION_INFO_HEADER_MESSAGE_ID,
     REDIS_KEY_PREFIX,
 )
+from open_webui.loboo import web_search as loboo_web_search
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
@@ -755,14 +756,15 @@ async def get_builtin_tools(
         )
 
     # Add web search tools if builtin category enabled AND enabled globally AND model has web_search capability
+    # loboo fork: no per-message switch, the model decides when to search; with the CPA configured every model
+    # searches through ChatGPT's native search (loboo/web_search.py).
     if (
         is_builtin_tool_enabled('web_search')
         and config.get('web.search.enable')
         and get_model_capability('web_search')
-        and features.get('web_search')
         and await has_user_permission('web_search')
     ):
-        builtin_functions.extend([search_web, fetch_url])
+        builtin_functions.extend(loboo_web_search.tools() or [search_web, fetch_url])
 
     # Add image generation/edit tools if builtin category enabled,
     # globally enabled, and allowed by model capability.
