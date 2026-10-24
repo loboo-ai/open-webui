@@ -115,12 +115,14 @@ du -sh data/terminals/*                   # 每个人的 home 大小
 - 换镜像：`image/build.sh` 打新标签，改 `docker-compose.yml`（`TERMINALS_IMAGE`、`TERMINALS_ALLOWED_IMAGES`）和 `policy-loboo.json` 的镜像名，`docker compose up -d`，再按上面应用策略并 refresh。旧标签留着方便回退。
 - 一个人的数据：删用户时编排服务不会清他的 home，要手动删 `data/terminals/<用户 id>`（先 `docker rm -f` 他的容器）。没有容量上限，也没有备份。
 - 有一个 `system` 用户的容器，是 loboo-webui 拉终端提示词时建的，同样会被空闲回收。
+- 防护链在开机时由 `loboo-terminals-fw.service` 挂上；它是 `PartOf=docker.service`，`systemctl restart docker` 时会跟着重新挂。这一点还没实测过：重启 Docker 后先看 `loboo-terminals-fw.sh status`，没挂上就手动执行 `loboo-terminals-fw.sh apply`。
+- loboo-webui 写 Key 时调用编排服务，超时 10 秒（`AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA`）。编排服务卡住时，开着萝卜云的消息最多多等这么久；写入失败不会让对话失败。
 
 ## 验证
 
 两个脚本都在宿主机上用 root 运行，不碰真实用户的数据：
 
-- `probe-network.sh`：在终端网络里起一个不带过滤的临时容器，测公网、`service.loboo-ai.com`，以及宿主机监听的每个端口、Docker 发布的每个端口和云元数据。只有本来就对公网开放的端口算预期开放，其余能连上的标为"意外可达"。被挡住的目标每个要等 3 秒超时，跑完要几分钟。2026-10-24 的结果：公网和 `service.loboo-ai.com` 都是 200；能连上的只有 22、80、443、8443、65534；clash、8080、9090–9097、18xxx 的萝卜服务、Postgres 5432、CPA、newapi、旧 open-webui、云元数据全部不通。
+- `probe-network.sh`：在终端网络里起一个不带过滤的临时容器，测公网、`service.loboo-ai.com`，以及宿主机监听的每个端口、Docker 发布的每个端口和云元数据。只有本来就对公网开放的端口算预期开放（取自 iptables-manager 对任意来源放行的规则和发布在 0.0.0.0 的端口），其余能连上的标为"意外可达"。新机器上还没装 iptables-manager 时，能连上的端口全会被标出来，这正说明 INPUT 还没锁住，不是脚本出错。被挡住的目标每个要等 3 秒超时，跑完要几分钟。2026-10-24 的结果：公网和 `service.loboo-ai.com` 都是 200；能连上的只有 22、80、443、8443、65534；clash、8080、9090–9097、18xxx 的萝卜服务、Postgres 5432、CPA、newapi、旧 open-webui、云元数据全部不通。
 - `probe-user-path.sh`：经编排服务给临时用户 `loboo-probe` 起终端，检查公网、pip、技能、CLI 本机版本与线上版本，以及终端列出的技能，最后删掉这个用户。
 
 端到端还要在 LoboOS 里看一眼：
