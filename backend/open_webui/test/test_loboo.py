@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import html
 import io
@@ -240,6 +241,46 @@ def test_model_logo_follows_the_vendor_the_connection_reports():
     assert model_logos.logo_url(registry, 'gone') == model_logos.UNKNOWN
 
 
+class FakeCpa:
+    """假的 CPA 会话：按顺序给出答复（状态码与 JSON、要抛出的异常，或一直不回的 HANG），记下发出的请求。"""
+
+    HANG = object()
+
+    def __init__(self):
+        self.replies, self.sent = [], []
+
+    def post(self, url, json=None, headers=None, **kwargs):
+        self.sent.append((url, headers['Authorization'], json))
+        reply = self.replies.pop(0)
+        if reply is self.HANG:
+            return HangingResponse()
+        if isinstance(reply, BaseException):
+            raise reply
+        return FakeResponse(*reply)
+
+
+class FakeResponse:
+    def __init__(self, status, data):
+        self.status, self.data = status, data
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def json(self, content_type=None):
+        return self.data
+
+
+class HangingResponse:
+    async def __aenter__(self):
+        await asyncio.Event().wait()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     monkeypatch.setattr(config, 'ENABLED', True)
@@ -250,7 +291,10 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
         return f'key-of-{user.id}'
 
     monkeypatch.setattr(credentials, 'key_for', key_for)
-    text = '- 上海今天有雨（[A 站](https://a.example/1?utm_source=openai)）\n- 气温 20℃ [天气网](https://c.example/3)'
+    text = (
+        '- 上海今天有雨（[A 站](https://a.example/1?utm_source=openai)）\n- 气温 20℃ [天气网](https://c.example/3)\n'
+        '- 词条 [Foo](https://wiki.example/wiki/Foo_(bar))'
+    )
     searched = {
         'output': [
             {
@@ -261,6 +305,7 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
                     'sources': [
                         {'type': 'url', 'url': 'https://b.example/2'},
                         {'type': 'url', 'url': 'https://c.example/3'},
+                        {'type': 'url', 'url': 'https://old.example/s?q=%C9%CF%BA%A3&amp&utm_source=openai'},
                         {'type': 'api', 'name': 'oai-weather'},
                     ],
                 },
@@ -280,28 +325,10 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
         ]
     }
     from_memory = {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': '凭记忆：可能有雨'}]}]}
-    replies, sent, events = [], [], {}
-
-    class Response:
-        def __init__(self, status, data):
-            self.status, self.data = status, data
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def json(self, content_type=None):
-            return self.data
-
-    class Session:
-        def post(self, url, json=None, headers=None, **kwargs):
-            sent.append((url, headers['Authorization'], json))
-            return Response(*replies.pop(0))
+    cpa, events = FakeCpa(), {}
 
     async def get_session():
-        return Session()
+        return cpa
 
     async def emit(event):
         events.setdefault(event['type'], []).append(event['data'])
@@ -311,37 +338,57 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
         ('last_active_at', 'updated_at', 'created_at'), 0
     )
 
-    async def ask(*answers):
-        replies[:], sent[:] = list(answers), []
+    async def ask(*answers, capabilities=None):
+        cpa.replies, cpa.sent = list(answers), []
         events.clear()
-        messages = [{'role': 'user', 'content': '上海明天要带伞吗'}]
+        # 带了附件时上游把检索内容拼进最后一条用户消息，原话另存在 base_user_prompt。
+        messages = [{'role': 'user', 'content': '<检索到的附件内容>\n上海明天要带伞吗'}]
+        metadata = {'base_user_prompt': '上海明天要带伞吗', 'model': {'info': {'meta': {'capabilities': capabilities}}}}
         return await web_search.search_internet(
-            '上海今天天气', __user__=member, __event_emitter__=emit, __messages__=messages
+            '上海今天天气', __user__=member, __event_emitter__=emit, __metadata__=metadata, __messages__=messages
         )
 
     # 渠道没有真正搜索（工具被去掉、凭记忆作答）时不用它的话，换一次渠道；用本人的 Key 发给 CPA 上的 GPT 强制搜索。
     result = await ask((200, from_memory), (200, searched))
     assert result.startswith('联网搜索结果（搜索时间：北京时间 ') and result.endswith(f'\n\n{text}')
-    assert [(url, key) for url, key, _ in sent] == [('https://cpa.example/v1/responses', 'Bearer key-of-u1')] * 2
-    body = sent[0][2]
+    assert [(url, key) for url, key, _ in cpa.sent] == [('https://cpa.example/v1/responses', 'Bearer key-of-u1')] * 2
+    body = cpa.sent[0][2]
     assert (body['model'], body['tool_choice'], body['tools'][0]['type']) == ('gpt-search', 'required', 'web_search')
     # 用户的原话一并带上：对话模型转述时可能把"明天"写错。
     assert body['input'][0]['content'][0]['text'] == '用户的原话：上海明天要带伞吗\n\n要查的：上海今天天气'
-    # 状态条先显示搜索词，再列出搜过的网站：引用的在前、带标题，去掉 utm_source 后同一网页只列一次。
-    # 引用的网页另作引用来源。
+    # 状态条先显示搜索词，再列出搜过的网站：引用的在前、带标题，去掉 utm_source 后同一网页只列一次，
+    # 其余查询串原样保留（GBK 编码、没有值的参数）。引用的网页另作引用来源。
     assert events['status'][0] == {'action': 'web_search_queries_generated', 'queries': ['上海今天天气'], 'done': False}
     assert events['status'][1]['items'] == [
         {'title': 'A 站', 'link': 'https://a.example/1'},
         {'title': '天气网', 'link': 'https://c.example/3'},
+        {'title': 'Foo', 'link': 'https://wiki.example/wiki/Foo_(bar)'},
         {'link': 'https://b.example/2'},
+        {'link': 'https://old.example/s?q=%C9%CF%BA%A3&amp'},
     ]
     sources = events['source']
-    assert [source['metadata'][0]['source'] for source in sources] == ['https://a.example/1', 'https://c.example/3']
+    assert [source['metadata'][0]['source'] for source in sources][:2] == ['https://a.example/1', 'https://c.example/3']
     assert sources[1]['document'] == ['- 气温 20℃ [天气网](https://c.example/3)']
+    # 模型关掉了引用能力时只列网站，不发引用来源。
+    await ask((200, searched), capabilities={'citations': False})
+    assert events['status'][-1]['done'] is True and 'source' not in events
 
     # 两次都没有真正搜索：如实报不可用，不把凭记忆写的内容当结果。
     assert json.loads(await ask((200, from_memory), (502, {}))) == {'error': web_search.UNAVAILABLE}
-    assert len(sent) == 2 and events['status'][-1]['error'] is True
+    assert len(cpa.sent) == 2 and events['status'][-1]['error'] is True
     # 额度用完、请求太快：不再换渠道重试。
     assert json.loads(await ask((429, {'error': 'rate limited'}))) == {'error': web_search.THROTTLED}
-    assert len(sent) == 1
+    assert len(cpa.sent) == 1
+    # 意外的错误、成员中途停止生成（上游取消任务），也都要把「搜索中」收尾，否则消息里的状态条一直转圈。
+    assert json.loads(await ask(RuntimeError('boom'))) == {'error': web_search.UNAVAILABLE}
+    assert events['status'][-1]['done'] is True
+    events.clear()
+    searching = asyncio.create_task(ask(FakeCpa.HANG))
+    for _ in range(100):
+        if events.get('status'):
+            break
+        await asyncio.sleep(0)
+    searching.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await searching
+    assert events['status'][-1] == {'action': 'web_search', 'description': '已停止搜索', 'done': True}

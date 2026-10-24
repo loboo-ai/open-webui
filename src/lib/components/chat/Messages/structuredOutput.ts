@@ -403,8 +403,13 @@ export function buildOutputDisplayItems(output: OutputItem[] = []): OutputDispla
 			return;
 		}
 
-		// loboo fork: these tools are shown in the status line instead.
-		if (item.type === 'function_call' && STATUS_ONLY_TOOLS.has(item.name ?? '')) {
+		// loboo fork: these tools are shown in the status line instead, except while a call waits for
+		// approval, which only its tool call block can give.
+		if (
+			item.type === 'function_call' &&
+			STATUS_ONLY_TOOLS.has(item.name ?? '') &&
+			item.status !== 'pending'
+		) {
 			return;
 		}
 

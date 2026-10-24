@@ -6,11 +6,12 @@
 进度、搜过的网站和引用来源用上游现成的 status、source 事件显示在消息上方和下方，不依赖 /v1/alpha/search。
 """
 
+import asyncio
+import contextlib
 import datetime as dt
 import logging
 import re
 from dataclasses import dataclass
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -47,7 +48,8 @@ INSTRUCTIONS = (
     '要查的内容是那个助手转述的，可能写错日期，时间和地点以用户的原话为准。'
     '只依据这次搜到的内容，查不到就直说，不要编造；用提问的语言回答，不寒暄，不给建议。'
 )
-_MARKDOWN_LINK = re.compile(r'\[([^\]\n]+)\]\((https?://[^)\s]+)\)')
+# 链接地址里可以有一层成对的括号，如维基百科的 /wiki/Foo_(bar)。
+_MARKDOWN_LINK = re.compile(r'\[([^\]\n]+)\]\((https?://(?:[^()\s]|\([^()\s]*\))+)\)')
 
 
 class SearchFailed(Exception):
@@ -76,6 +78,7 @@ async def search_internet(
     __request__: Request = None,
     __user__: dict = None,
     __event_emitter__: callable = None,
+    __metadata__: dict = None,
     __messages__: list = None,
 ) -> str:
     """
@@ -95,38 +98,31 @@ async def search_internet(
     """
     if not query.strip():
         return JSONCodec.dumps({'error': 'query is empty'})
+    metadata = __metadata__ or {}
+    # 用户这一轮的原话。带了附件或知识库时，上游会把检索到的内容拼进最后一条用户消息，
+    # 拼之前的原话存在 base_user_prompt 里。
+    user_words = metadata.get('base_user_prompt') or get_last_user_message(__messages__ or [])
 
+    # 状态条一旦显示「搜索中」，每条出路都要收尾：消息里存的最后一个状态没结束，这条消息就一直转圈。
     await _status(__event_emitter__, {'action': 'web_search_queries_generated', 'queries': [query], 'done': False})
     try:
-        findings = await search(UserModel(**__user__), query, get_last_user_message(__messages__ or []))
+        findings = await search(UserModel(**__user__), query, user_words)
+    except asyncio.CancelledError:
+        # 成员停止了生成，上游会取消这个任务。收尾只是尽力而为：发状态失败也不能把取消换成别的异常。
+        with contextlib.suppress(Exception):
+            await _status(__event_emitter__, {'action': 'web_search', 'description': '已停止搜索', 'done': True})
+        raise
     except SearchFailed as e:
-        await _status(__event_emitter__, {'action': 'web_search', 'description': str(e), 'done': True, 'error': True})
-        return JSONCodec.dumps({'error': str(e)}, ensure_ascii=False)
-
-    sites = [{'title': title, 'link': url} for url, title, _ in findings.cited] + [
-        {'link': url} for url in findings.consulted
-    ]
-    if sites:
-        # 上游的状态条把这句翻成「已搜索 N 个网站」，并列出这些网站。
-        searched = {'description': 'Searched {{count}} sites', 'urls': [site['link'] for site in sites], 'items': sites}
+        failure = str(e)
+    except Exception:
+        log.exception('loboo: web search failed')
+        failure = UNAVAILABLE
     else:
-        # 天气、行情这类搜索的数据不来自网页，没有可列的网站。
-        searched = {'description': '已联网搜索'}
-    await _status(__event_emitter__, {'action': 'web_search', 'done': True, **searched})
-    if __event_emitter__:
-        for url, title, line in findings.cited:
-            await __event_emitter__(
-                {
-                    'type': 'source',
-                    'data': {
-                        'source': {'name': title, 'url': url},
-                        'document': [line or title],
-                        'metadata': [{'source': url, 'name': title}],
-                    },
-                }
-            )
-    # 搜索发生的时间对对话模型是有用的事实；它对"今天"的认知来自默认系统提示里的日期（deploy/loboo-webui/README.md）。
-    return f'联网搜索结果（搜索时间：{_now()}）\n\n{findings.text}'
+        await _report(__event_emitter__, findings, cite=_citations_enabled(metadata))
+        # 搜索时间对对话模型是有用的事实；它对"今天"的认知来自默认系统提示里的日期（deploy/loboo-webui/README.md）。
+        return f'联网搜索结果（搜索时间：{_now()}）\n\n{findings.text}'
+    await _status(__event_emitter__, {'action': 'web_search', 'description': failure, 'done': True, 'error': True})
+    return JSONCodec.dumps({'error': failure}, ensure_ascii=False)
 
 
 async def search(user: UserModel, query: str, user_words: str | None = None) -> Findings:
@@ -162,14 +158,24 @@ async def search(user: UserModel, query: str, user_words: str | None = None) -> 
             outcome = type(e).__name__
         else:
             if status in (401, 403, 429):
-                log.warning('loboo: web search for user %s refused by the CPA: HTTP %d', user.id, status)
+                log.warning(
+                    'loboo: web search for user %s refused by the CPA: HTTP %d %s', user.id, status, _error(data)
+                )
                 raise SearchFailed(THROTTLED if status == 429 else UNAVAILABLE)
             findings = findings_from(data) if status == 200 else None
             if findings:
                 return findings
-            outcome = 'no search performed' if status == 200 else f'HTTP {status}'
+            outcome = 'no search performed' if status == 200 else f'HTTP {status} {_error(data)}'
         log.warning('loboo: web search attempt %d/%d for user %s failed: %s', attempt, ATTEMPTS, user.id, outcome)
     raise SearchFailed(UNAVAILABLE)
+
+
+def _error(data) -> str:
+    """CPA 错误答复里的原因（OpenAI 格式的 error.message，或 CPA 自己的 error 字符串），记日志用。"""
+    error = data.get('error') if isinstance(data, dict) else None
+    if isinstance(error, dict):
+        error = error.get('message') or error.get('code')
+    return str(error)[:200] if error else ''
 
 
 def findings_from(data) -> Findings | None:
@@ -216,10 +222,16 @@ def findings_from(data) -> Findings | None:
 
 
 def _untracked(url: str) -> str:
-    """去掉链接的 utm_source（OpenAI 搜索给引用加了 utm_source=openai），同一网页在引用和正文里才对得上。"""
-    parts = urlsplit(url)
-    query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != 'utm_source']
-    return urlunsplit(parts._replace(query=urlencode(query)))
+    """
+    去掉链接的 utm_source（OpenAI 搜索给引用加了 utm_source=openai），同一网页在引用和正文里才对得上。
+    只按原文删掉这一项，不解码再编码查询串：GBK 编码的中文查询、没有值的参数都要原样保留。
+    """
+    base, question, rest = url.partition('?')
+    query, hash_mark, fragment = rest.partition('#')
+    if not question or 'utm_source=' not in query:
+        return url
+    kept = '&'.join(pair for pair in query.split('&') if not pair.startswith('utm_source='))
+    return f'{base}?{kept}{hash_mark}{fragment}' if kept else f'{base}{hash_mark}{fragment}'
 
 
 async def _post(key: str, body: dict) -> tuple[int, object]:
@@ -244,6 +256,39 @@ def _line(text: str, index: int) -> str:
     start = text.rfind('\n', 0, index) + 1
     end = text.find('\n', index)
     return text[start : end if end != -1 else len(text)].strip()
+
+
+def _citations_enabled(metadata: dict) -> bool:
+    """模型关掉了引用能力（citations）时不发引用来源，和上游给工具结果发来源的规则一样，默认开。"""
+    model = metadata.get('model') or {}
+    return (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('citations', True)
+
+
+async def _report(emitter, findings: Findings, *, cite: bool) -> None:
+    """把状态条收尾为搜过的网站（引用的在前）；cite 时引用的网页另作引用来源。"""
+    sites = [{'title': title, 'link': url} for url, title, _ in findings.cited] + [
+        {'link': url} for url in findings.consulted
+    ]
+    if sites:
+        # 上游的状态条把这句翻成「已搜索 N 个网站」，并列出这些网站。
+        searched = {'description': 'Searched {{count}} sites', 'urls': [site['link'] for site in sites], 'items': sites}
+    else:
+        # 天气、行情这类搜索的数据不来自网页，没有可列的网站。
+        searched = {'description': '已联网搜索'}
+    await _status(emitter, {'action': 'web_search', 'done': True, **searched})
+    if not (emitter and cite):
+        return
+    for url, title, line in findings.cited:
+        await emitter(
+            {
+                'type': 'source',
+                'data': {
+                    'source': {'name': title, 'url': url},
+                    'document': [line or title],
+                    'metadata': [{'source': url, 'name': title}],
+                },
+            }
+        )
 
 
 async def _status(emitter, data: dict) -> None:

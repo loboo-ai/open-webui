@@ -25,7 +25,7 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 - systemd 单元 `loboo-webui`（`loboo-webui.service`），uvicorn 单进程监听 `172.17.0.1:18120`。萝卜 Key 缓存在进程内，不能开多个 worker。
 - openresty 的 `m.loboo-ai.com`、`m.haina-api.net` 两个站点都转发到这个端口，要透传 WebSocket（`Upgrade`、`Connection`），不缓冲响应，读超时放长。新增对外域名时，同时加进 `CORS_ALLOW_ORIGIN`，并在根目录放小程序业务域名的校验文件。
 - 模型连接在管理后台配：地址 `https://ootd.haina-api.net/v1`，key 留空，`auth_type` 为 `loboo`，不填模型 ID（从 CPA 动态拉取）。key 留空时，就算有人在界面上把认证方式改掉，最坏也只是不带 key，不会用错别人的 key。
-- 联网搜索在管理后台「设置 → 联网搜索」打开总开关即可，搜索引擎留空：本 fork 不用那里的引擎、抓取和检索设置。对话里每个模型都能用 `search_internet` 工具，没有开关，由模型判断要不要搜；搜索交给 CPA 上的 `LOBOO_SEARCH_MODEL`（默认 gpt-6.1-sol）用原生 web_search 执行，用本人的 Key、按这个模型计费。CPA 在不支持原生搜索的渠道上会去掉这个工具，这样的答复不用，换一次渠道重试，仍然没搜就告诉成员暂时不可用。成员要有「联网搜索」权限（默认就有）；单个模型可在「模型」里取消联网搜索能力。CPA 的 chat/completions 目前把发给 Gemini 的工具结果变成空的 `{}`，Gemini 拿不到搜索结果，所以两个 gemini 模型的联网搜索能力是关着的，CPA 修好后再打开。
+- 联网搜索在管理后台「设置 → 联网搜索」打开总开关即可，搜索引擎留空：本 fork 不用那里的引擎、抓取和检索设置。对话里每个模型都能用 `search_internet` 工具，没有开关，由模型判断要不要搜；搜索交给 CPA 上的 `LOBOO_SEARCH_MODEL`（默认 gpt-6.1-sol）用原生 web_search 执行，用本人的 Key、按这个模型计费。CPA 在不支持原生搜索的渠道上会去掉这个工具，这样的答复不用，换一次渠道重试，仍然没搜就告诉成员暂时不可用。成员要有「联网搜索」权限（默认就有）；单个模型可在「模型」里取消联网搜索能力。CPA 的 chat/completions 目前把发给 Gemini 的工具结果变成空的 `{}`，Gemini 拿不到搜索结果，所以两个 gemini 模型的联网搜索能力是关着的，CPA 修好后再打开。频道（channels）里的对话看不到搜索进度和来源：上游的频道不转发状态与来源事件，而工具调用块又收起了；生产没开频道。
 - 所有模型共用一条默认系统提示，在「设置 → 模型」的默认参数里（`models.default_params.system`）：`今天是 {{CURRENT_DATE}}（{{CURRENT_WEEKDAY}}），用户所在时区 {{CURRENT_TIMEZONE}}。联网搜索等工具返回的是实时数据，回答以工具结果为准。` 变量由成员的浏览器按本机时间填。模型不知道今天的日期时，会把"明天"写成别的日期去搜，也不信超出它知识截止日期的搜索结果（Claude 尤其明显）。不放 `{{CURRENT_TIME}}`：系统提示是每个请求的前缀，每分钟变一次会让提示缓存失效。给单个模型写系统提示会整个覆盖这条默认值，要自己带上日期变量。
 - 图片生成和编辑在管理后台「图像」里配，两边都选 OpenAI：地址同上，key 留空，模型 `gpt-image-2`，尺寸留空（不传尺寸，由模型决定）。地址是 CPA 时一律用本人的 Key，后台填的 key 不会用到；没开通 Codex 的人看到的提示和对话里一样。成员在输入框「扩展功能」里打开「图片」后，对话模型按需调用生成或编辑，不用选图片模型。CPA 列出的 `gpt-image-*` 在管理后台「模型」里设为隐藏，不出现在对话模型列表；CPA 以后新增的图片模型也要这样隐藏。
 
@@ -61,4 +61,4 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 | 对话提示「Codex 未开通或已到期」 | 这个成员在萝卜里的 Codex 状态 |
 | 模型列表是空的 | CPA 是否可达；重启后还没有成员登录过时，没有可借用的 key 去拉列表 |
 | 页面能开、聊天没输出 | 网关是否透传 WebSocket |
-| 对话提示「联网搜索暂时不可用」 | 日志里 `loboo: web search attempt`：`no search performed` 是承接的渠道不支持原生搜索，`HTTP 5xx`、超时是 CPA 或上游的问题 |
+| 对话提示「联网搜索暂时不可用」 | 日志里以 `loboo: web search` 开头的行：`no search performed` 是承接的渠道不支持原生搜索；`HTTP …` 后面跟着 CPA 给的原因；`timed out` 是搜索超过 45 秒；`web search failed` 带堆栈的是代码出错 |

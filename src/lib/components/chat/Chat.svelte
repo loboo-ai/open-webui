@@ -356,20 +356,9 @@
 	let pendingWebSearchPrompt: string | null = null;
 	let webSearchConfirmed = false;
 
-	$: {
-		const currentModels = atSelectedModel?.id ? [atSelectedModel.id] : selectedModels;
-		const allModelsSupportWebSearch =
-			currentModels.filter(
-				(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.web_search ?? true
-			).length === currentModels.length;
-
-		webSearchActive = Boolean(
-			$config?.features?.enable_web_search &&
-			($user?.role === 'admin' || $user?.permissions?.features?.web_search) &&
-			(webSearchEnabled ||
-				(allModelsSupportWebSearch && ($settings?.webSearch ?? false) === 'always'))
-		);
-	}
+	// loboo fork: there is no per-message web search switch. The backend offers search to every model and the
+	// model decides when to search, so webSearchActive stays false: no confirmation dialog, and no forced search
+	// in legacy function calling from an old "always" setting or a model's default features.
 
 	const openWebSearchConfirm = () => {
 		window.setTimeout(() => {

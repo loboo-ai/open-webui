@@ -756,15 +756,17 @@ async def get_builtin_tools(
         )
 
     # Add web search tools if builtin category enabled AND enabled globally AND model has web_search capability
-    # loboo fork: no per-message switch, the model decides when to search; with the CPA configured every model
-    # searches through ChatGPT's native search (loboo/web_search.py).
+    # loboo fork: with the CPA configured every model always gets web search through ChatGPT's native search
+    # (loboo/web_search.py) and decides when to search; otherwise upstream's per-message switch applies.
     if (
         is_builtin_tool_enabled('web_search')
         and config.get('web.search.enable')
         and get_model_capability('web_search')
         and await has_user_permission('web_search')
     ):
-        builtin_functions.extend(loboo_web_search.tools() or [search_web, fetch_url])
+        builtin_functions.extend(
+            loboo_web_search.tools() or ([search_web, fetch_url] if features.get('web_search') else [])
+        )
 
     # Add image generation/edit tools if builtin category enabled,
     # globally enabled, and allowed by model capability.
