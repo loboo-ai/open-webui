@@ -1,0 +1,56 @@
+# 萝卜云：官方 Terminals 编排服务（Docker 后端），每个 loboo-webui 用户一个 Open Terminal 容器。
+# Terminals 用于生产需要 Open WebUI 企业许可；开给全体成员是用户 2026-10-24 为评估做的决定。
+# loboo-webui 里的连接 loboo-terminals 授权给所有人，并经「模型默认值」(models.default_metadata.terminalId)
+# 在新对话里默认选中。这里一停，开着萝卜云的对话就会报错，重启尽量避开成员使用的时段。
+# 完整说明、迁移步骤见同目录 README.md。
+#
+# 终端容器所在的 loboo-terminals 网络事先手工建好（compose 不管它的生命周期）。网段必须在 172.16.0.0/12
+# 之外：iptables-manager 对 172.16.0.0/12 放行了 clash、8080 等宿主机端口，落在里面终端就能连到它们。
+#   docker network create --driver bridge --subnet 10.89.0.0/22 --gateway 10.89.0.1 \
+#     -o com.docker.network.bridge.name=br-loboo-term \
+#     -o com.docker.network.bridge.host_binding_ipv4=127.0.0.1 loboo-terminals
+# Terminals 给每个终端容器都开 PublishAllPorts，host_binding_ipv4 让这些端口只绑在 127.0.0.1。
+# 终端可以访问整个公网；访问内网和宿主机发布端口由 loboo-terminals-fw.sh（DOCKER-USER 链 LOBOOTERM）挡住。
+# 终端镜像 loboo/open-terminal 用 image/build.sh 在本机构建（官方镜像加中文字体、loboo-cli 与技能）。
+name: loboo-terminals
+
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-api]
+
+  terminals:
+    image: ghcr.io/open-webui/terminals:0.2.5
+    restart: unless-stopped
+    depends_on: [socket-proxy]
+    env_file: .env # TERMINALS_API_KEY
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+      TERMINALS_BACKEND: docker
+      TERMINALS_DOCKER_NETWORK: loboo-terminals
+      # home 目录由 Docker 守护进程按宿主机路径挂载，编排服务内外必须是同一个绝对路径
+      TERMINALS_DOCKER_DATA_DIR: /opt/loboo-terminals/data/terminals
+      TERMINALS_DATABASE_URL: sqlite+aiosqlite:////opt/loboo-terminals/data/terminals.db
+      TERMINALS_IMAGE: loboo/open-terminal:0.14.4-r2
+      TERMINALS_ALLOWED_IMAGES: loboo/open-terminal:0.14.4-r2
+      TERMINALS_MAX_CPU: "1"
+      TERMINALS_MAX_MEMORY: 1Gi
+      TERMINALS_IDLE_TIMEOUT_MINUTES: "15"
+      TERMINALS_ENABLE_UI: "false"
+    volumes:
+      - /opt/loboo-terminals/data:/opt/loboo-terminals/data
+    ports:
+      - 127.0.0.1:18210:3000
+    networks: [docker-api, loboo-terminals]
+
+networks:
+  docker-api:
+    internal: true
+  loboo-terminals:
+    external: true

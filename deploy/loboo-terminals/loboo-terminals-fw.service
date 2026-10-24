@@ -1,0 +1,15 @@
+[Unit]
+Description=萝卜云终端网络防护（iptables DOCKER-USER 链 LOBOOTERM）
+# Docker 起来后才有 DOCKER-USER；随 Docker 一起停、一起重启（PartOf），重启后重新挂链
+After=docker.service riven-forward.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/loboo-terminals-fw.sh apply
+ExecStop=/usr/local/sbin/loboo-terminals-fw.sh remove
+
+[Install]
+WantedBy=multi-user.target docker.service

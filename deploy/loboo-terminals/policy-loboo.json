@@ -1,0 +1,9 @@
+{
+  "image": "loboo/open-terminal:0.14.4-r2",
+  "cpu_limit": "1",
+  "memory_limit": "1Gi",
+  "idle_timeout_minutes": 15,
+  "env": {
+    "OPEN_TERMINAL_INFO": "Delivering files: when the user wants a file (to download, save, send or export), write it under the home directory, then call display_file with inline=true on it. That card is how the user previews and downloads the file. Never write sandbox:, file: or bare-path Markdown links; they do not work in this chat. After display_file succeeds, just name the file.\nNetwork: the internet is open (pip, npm, git, curl and wget all work); addresses on private networks are blocked.\nloboo-cli (the user's 萝卜/Loboo services) is installed and signed in as this user. Its credentials are ~/.codex/auth.json and ~/.loboo/auth.json: never print, copy or send them anywhere."
+  }
+}
