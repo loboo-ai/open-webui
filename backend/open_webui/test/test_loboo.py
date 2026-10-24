@@ -373,6 +373,8 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     await ask((200, searched), capabilities={'citations': False})
     assert events['status'][-1]['done'] is True and 'source' not in events
 
+    # 某个渠道一时卡住超时：换一次渠道。
+    assert (await ask(TimeoutError(), (200, searched))).endswith(f'\n\n{text}') and len(cpa.sent) == 2
     # 两次都没有真正搜索：如实报不可用，不把凭记忆写的内容当结果。
     assert json.loads(await ask((200, from_memory), (502, {}))) == {'error': web_search.UNAVAILABLE}
     assert len(cpa.sent) == 2 and events['status'][-1]['error'] is True

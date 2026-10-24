@@ -30,8 +30,8 @@ log = logging.getLogger(__name__)
 TIMEZONE = ZoneInfo('Asia/Shanghai')
 USER_LOCATION = {'type': 'approximate', 'country': 'CN', 'timezone': 'Asia/Shanghai'}
 WEEKDAYS = '一二三四五六日'
-# 一次搜索通常 6～26 秒（宽泛的问题会多搜几次、打开网页）。连接断开、上游出错或渠道没有真正搜索时换一次渠道，
-# 所以最多两次；超时不重试，同样的请求再等一次多半还是超时。
+# 一次搜索通常 6～26 秒（宽泛的问题会多搜几次、打开网页）。超时、连接断开、上游出错或渠道没有真正搜索时
+# 换一次渠道（超时多是某个渠道一时卡住，同一个问题再问通常 20 秒内就有结果），所以最多两次。
 ATTEMPTS = 2
 ATTEMPT_TIMEOUT_SECONDS = 45
 UNAVAILABLE = '联网搜索暂时不可用，请稍后再试。'
@@ -152,8 +152,7 @@ async def search(user: UserModel, query: str, user_words: str | None = None) -> 
         try:
             status, data = await _post(key, body)
         except TimeoutError:
-            log.warning('loboo: web search for user %s timed out after %ds', user.id, ATTEMPT_TIMEOUT_SECONDS)
-            raise SearchFailed(UNAVAILABLE)
+            outcome = f'timed out after {ATTEMPT_TIMEOUT_SECONDS}s'
         except (aiohttp.ClientError, ValueError) as e:
             outcome = type(e).__name__
         else:

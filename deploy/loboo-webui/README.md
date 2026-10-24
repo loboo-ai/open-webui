@@ -61,4 +61,4 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 | 对话提示「Codex 未开通或已到期」 | 这个成员在萝卜里的 Codex 状态 |
 | 模型列表是空的 | CPA 是否可达；重启后还没有成员登录过时，没有可借用的 key 去拉列表 |
 | 页面能开、聊天没输出 | 网关是否透传 WebSocket |
-| 对话提示「联网搜索暂时不可用」 | 日志里以 `loboo: web search` 开头的行：`no search performed` 是承接的渠道不支持原生搜索；`HTTP …` 后面跟着 CPA 给的原因；`timed out` 是搜索超过 45 秒；`web search failed` 带堆栈的是代码出错 |
+| 对话提示「联网搜索暂时不可用」 | 日志里以 `loboo: web search` 开头的行：`no search performed` 是承接的渠道不支持原生搜索；`HTTP …` 后面跟着 CPA 给的原因；`timed out` 是这次搜索超过 45 秒（每种失败都会换一次渠道重试，两次都失败才提示）；`web search failed` 带堆栈的是代码出错 |
