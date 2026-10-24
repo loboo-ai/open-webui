@@ -1790,6 +1790,7 @@ export interface ModelMeta {
 	capabilities?: object;
 	profile_image_url?: string;
 	background_image_url?: string | null;
+	terminalId?: string;
 }
 
 export interface ModelControl {

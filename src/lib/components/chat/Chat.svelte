@@ -1043,6 +1043,16 @@
 		selectedTerminalId.set(null);
 	}
 
+	// loboo fork: the layout loads the terminal list in the background, so a new chat can set its defaults first.
+	// A model's default terminal asked for before the list arrived is applied, if available, once it does.
+	let pendingDefaultTerminalId: string | null = null;
+	$: if ($terminalServers !== null && pendingDefaultTerminalId) {
+		if (isTerminalAvailable(pendingDefaultTerminalId)) {
+			selectedTerminalId.set(pendingDefaultTerminalId);
+		}
+		pendingDefaultTerminalId = null;
+	}
+
 	let lastTerminalSkillSelector: string | null = null;
 	$: if ($selectedTerminalId !== lastTerminalSkillSelector) {
 		selectedSkillIds = selectedSkillIds.filter((id) => !id.startsWith('terminal:'));
@@ -1190,7 +1200,9 @@
 				// Set Default Terminal — only if the referenced terminal actually exists
 				if (model?.info?.meta?.terminalId) {
 					const tid = model.info.meta.terminalId;
-					if (isTerminalAvailable(tid)) {
+					if ($terminalServers === null) {
+						pendingDefaultTerminalId = tid;
+					} else if (isTerminalAvailable(tid)) {
 						selectedTerminalId.set(tid);
 					}
 				}
