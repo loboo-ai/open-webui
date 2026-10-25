@@ -18,8 +18,10 @@
 	class="codespan cursor-pointer {!done && ($settings?.chatFadeStreamingText ?? true)
 		? 'fade-in-token'
 		: ''}"
-	on:click={() => {
-		copyToClipboard(unescapeHtml(token.text));
-		toast.success($i18n.t('Copied to clipboard'));
+	on:click={async () => {
+		// loboo fork: only claim the copy when it happened (Android WebViews can refuse it).
+		if (await copyToClipboard(unescapeHtml(token.text))) {
+			toast.success($i18n.t('Copied to clipboard'));
+		}
 	}}>{unescapeHtml(token.text)}</code
 >

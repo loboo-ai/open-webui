@@ -629,7 +629,10 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 		}
 	} else {
 		let result = false;
-		if (!navigator.clipboard) {
+		// loboo fork: the execCommand copy is also the fallback when writeText is refused (WebViews such as the
+		// WeChat mini program on Android), instead of reporting failure.
+		const copyWithExecCommand = () => {
+			let result = false;
 			const span = document.createElement('span');
 			span.textContent = text;
 			span.style.whiteSpace = 'pre';
@@ -657,6 +660,9 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 			selection?.removeAllRanges();
 			document.body.removeChild(span);
 			return result;
+		};
+		if (!navigator.clipboard) {
+			return copyWithExecCommand();
 		}
 
 		result = await navigator.clipboard
@@ -667,7 +673,7 @@ export const copyToClipboard = async (text, html = null, formatted = false) => {
 			})
 			.catch((error) => {
 				console.error('Async: Could not copy text: ', error);
-				return false;
+				return copyWithExecCommand();
 			});
 
 		return result;

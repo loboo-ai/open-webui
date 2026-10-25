@@ -53,9 +53,11 @@
 	<svelte:element
 		this={displayMode ? 'div' : 'span'}
 		class="cursor-pointer"
-		on:click={() => {
-			copyToClipboard(content);
-			toast.success($i18n.t('Copied to clipboard'));
+		on:click={async () => {
+			// loboo fork: only claim the copy when it happened (Android WebViews can refuse it).
+			if (await copyToClipboard(content)) {
+				toast.success($i18n.t('Copied to clipboard'));
+			}
 		}}
 	>
 		{@html renderedHTML}

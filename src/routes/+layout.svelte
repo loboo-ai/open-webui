@@ -74,6 +74,7 @@
 		removeAllDetails
 	} from '$lib/utils';
 	import { setTextScale } from '$lib/utils/text-scale';
+	import { installMiniProgramLinks } from '$lib/loboo';
 
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
 	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
@@ -1135,6 +1136,9 @@
 		};
 
 		window.addEventListener('message', windowMessageEventHandler);
+		// loboo fork: links, window.open and downloads inside the WeChat mini program; before the first await so a
+		// click during startup is already handled.
+		installMiniProgramLinks();
 
 		let touchstartY = 0;
 

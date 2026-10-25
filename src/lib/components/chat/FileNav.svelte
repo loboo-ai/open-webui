@@ -45,6 +45,7 @@
 	import { isSavedChatId, isTemporaryChatId } from '$lib/utils/chatId';
 	import { copyToClipboard } from '$lib/utils';
 	import { normalizeDocumentTargetPage } from '$lib/utils/documentPreview';
+	import { blockDownloadInMiniProgram } from '$lib/loboo';
 
 	import Spinner from '../common/Spinner.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -989,6 +990,7 @@
 	const downloadFile = async (path: string) => {
 		const terminal = selectedTerminal;
 		if (!terminal || downloading) return;
+		if (blockDownloadInMiniProgram()) return; // loboo fork: say so before fetching the file
 
 		downloading = true;
 		const toastId = toast.loading($i18n.t('Preparing download...'));
@@ -1362,6 +1364,7 @@
 	const bulkDownload = async () => {
 		const terminal = selectedTerminal;
 		if (!terminal || downloading) return;
+		if (blockDownloadInMiniProgram()) return; // loboo fork: say so before fetching the files
 
 		const paths = [...selectedEntries].map((p) => p.replace(/\/$/, ''));
 		if (paths.length === 0) return;

@@ -22,6 +22,7 @@
 	import {
 		LOAD_PREVIEW_LABEL,
 		PREVIEW_ASLEEP_TEXT,
+		blockDownloadInMiniProgram,
 		getCloudState
 	} from '$lib/loboo';
 
@@ -236,6 +237,7 @@
 
 	async function downloadFile() {
 		if (!terminal || !path) return;
+		if (blockDownloadInMiniProgram()) return; // loboo fork: say so before fetching the file
 		const result = await downloadFileBlob(terminal.url, terminal.key, path, chatId || undefined);
 		if (!result) {
 			toast.error(t('Download failed'));
