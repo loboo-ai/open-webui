@@ -11,7 +11,7 @@
 #     -o com.docker.network.bridge.host_binding_ipv4=127.0.0.1 loboo-terminals
 # Terminals 给每个终端容器都开 PublishAllPorts，host_binding_ipv4 让这些端口只绑在 127.0.0.1。
 # 终端可以访问整个公网；访问内网和宿主机发布端口由 loboo-terminals-fw.sh（DOCKER-USER 链 LOBOOTERM）挡住。
-# 终端镜像 loboo/open-terminal 用 image/build.sh 在本机构建（官方镜像加中文字体、loboo-cli 与技能）。
+# 终端镜像 loboo/open-terminal 用 image/build.sh 在本机构建（官方镜像加中文字体、rg/fd、bash 作 /bin/sh、loboo-cli 与技能）。
 name: loboo-terminals
 
 # Terminals 0.2.5 每转发一个请求都会在日志里多打一条约 41 KB 的报错堆栈（请求本身成功），而 Docker 默认不轮转。
@@ -48,8 +48,9 @@ services:
       # home 目录由 Docker 守护进程按宿主机路径挂载，编排服务内外必须是同一个绝对路径
       TERMINALS_DOCKER_DATA_DIR: /opt/loboo-terminals/data/terminals
       TERMINALS_DATABASE_URL: sqlite+aiosqlite:////opt/loboo-terminals/data/terminals.db
-      TERMINALS_IMAGE: loboo/open-terminal:0.14.4-r2
-      TERMINALS_ALLOWED_IMAGES: loboo/open-terminal:0.14.4-r2
+      TERMINALS_IMAGE: loboo/open-terminal:0.14.4-r3
+      # 逗号分隔的 fnmatch 模式，只在 PUT 策略时校验。留着上一版，回滚时只改策略、不用改这里
+      TERMINALS_ALLOWED_IMAGES: loboo/open-terminal:0.14.4-r2,loboo/open-terminal:0.14.4-r3
       TERMINALS_MAX_CPU: "1"
       TERMINALS_MAX_MEMORY: 1Gi
       TERMINALS_IDLE_TIMEOUT_MINUTES: "15"
