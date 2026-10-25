@@ -702,7 +702,11 @@ def _cloud_and_shared_terminals(monkeypatch):
     async def get(key, default=None):
         return connections if key == 'terminal_server.connections' else default
 
+    async def get_many(*keys):
+        return {}
+
     monkeypatch.setattr(Config, 'get', staticmethod(get))
+    monkeypatch.setattr(Config, 'get_many', staticmethod(get_many))
     monkeypatch.setattr(cloud, '_contexts', {})
 
 
@@ -729,15 +733,22 @@ async def test_loboo_cloud_plain_messages_leave_the_terminal_asleep(monkeypatch)
     user = SimpleNamespace(id='u1', role='user')
 
     # 萝卜云：进程里还没有这个人的缓存时问一次容器，之后的消息都用缓存，不碰容器；
-    # 对话里 $ 点名过的技能正文也一样，第一次点名时取一次。
+    # 对话里选用或 $ 点名的技能正文也一样，按中间件的取法第一次取一次。
     for _ in range(3):
         message = {'terminal_id': 'cloud', 'chat_id': 'c1'}
-        assert (await hooks.terminal_skill(None, user, message, 'loboo-cli', {}))['content'] == 'body'
+        skill = await hooks.terminal_skill(None, user, message, 'loboo-cli', {}, overview=True, tools_enabled=True)
+        assert skill['content'] == 'body'
         assert await hooks.terminal_skills(None, user, message, {}) == [
             {'id': 'terminal:loboo-cli', 'name': 'loboo-cli'}
         ]
         assert await hooks.terminal_agents_md(None, user, message, {}) == '# AGENTS.md\n\nhi'
     assert sorted(asked) == [('cloud', '/skills'), ('cloud', '/skills/read?name=loboo-cli'), ('cloud', 'AGENTS.md')]
+    # 取法不同（比如这个模型关了技能工具）正文也不同，另取一次。
+    asked.clear()
+    await hooks.terminal_skill(
+        None, user, {'terminal_id': 'cloud', 'chat_id': 'c1'}, 'loboo-cli', {}, overview=True, tools_enabled=False
+    )
+    assert asked == [('cloud', '/skills/read?name=loboo-cli')]
     # 点名了缓存里没有的技能（比如刚在面板里新建的）：当场重取一次。
     asked.clear()
     await hooks.terminal_skills(None, user, {'terminal_id': 'cloud', 'chat_id': 'c1'}, {}, ['terminal:brand-new'])

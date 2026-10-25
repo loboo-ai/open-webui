@@ -206,9 +206,10 @@ class _Context:
 # (用户, 终端, 上下文) → 最近一次从容器取到的上下文。只在容器真被用过之后刷新，所以是"它上次醒着时的样子"：
 # 在面板或 Shell 里直接改了技能目录、AGENTS.md，要等下一次调用终端工具后才进系统提示。
 _contexts: dict[tuple[str, str, str], _Context] = {}
-# 对话里用 $ 点名过的技能正文：((用户, 终端, 上下文), 技能名) → get_terminal_skill 的结果。点名会一直留在对话里，
+# 对话里选用或用 $ 点名的技能正文：((用户, 终端, 上下文), 技能名, 取法) → get_terminal_skill 的结果。取法是传给
+# get_terminal_skill 的关键字参数（overview、tools_enabled），结果随它变。选用和点名会一直留在对话里，
 # 不缓存的话这个对话之后的每条消息都要去容器取一次。
-_skill_bodies: dict[tuple[tuple[str, str, str], str], dict] = {}
+_skill_bodies: dict[tuple[tuple[str, str, str], str, tuple], dict] = {}
 _refreshing: dict[tuple[str, str, str], asyncio.Task] = {}
 # 一轮里连着调用多次终端工具时，只在最后一次之后取一回。
 _REFRESH_DELAY_SECONDS = 5
@@ -247,18 +248,24 @@ async def terminal_agents_md(request, user: UserModel, metadata: dict, extra_par
     return context.agents_md if context else None
 
 
-async def terminal_skill(request, user: UserModel, metadata: dict, skill_name: str, extra_params: dict | None):
-    """对话里点名的终端技能的正文；萝卜云第一次点名时取一次，之后用缓存，其他终端照旧现取。"""
+async def terminal_skill(
+    request, user: UserModel, metadata: dict, skill_name: str, extra_params: dict | None, **options
+):
+    """
+    对话里选用或点名的终端技能的正文；options 原样交给 get_terminal_skill。
+    萝卜云按同样的取法第一次取一次，之后用缓存，其他终端照旧现取。
+    """
     from open_webui.utils.terminals import get_terminal_skill
 
     slot = await _cloud_slot(user.id, metadata)
     if slot is None:
-        return await get_terminal_skill(request, user, metadata, skill_name, extra_params)
-    body = _skill_bodies.get((slot, skill_name))
+        return await get_terminal_skill(request, user, metadata, skill_name, extra_params, **options)
+    key = (slot, skill_name, tuple(sorted(options.items())))
+    body = _skill_bodies.get(key)
     if body is None:
-        body = await get_terminal_skill(request, user, metadata, skill_name, extra_params)
+        body = await get_terminal_skill(request, user, metadata, skill_name, extra_params, **options)
         if body is not None:
-            _skill_bodies[(slot, skill_name)] = body
+            _skill_bodies[key] = body
     return body
 
 
@@ -372,7 +379,8 @@ def _refresh_later(slot, request, user: UserModel, metadata: dict) -> None:
             if context is not None:
                 _contexts[slot] = context
             for key in [key for key in _skill_bodies if key[0] == slot]:
-                body = await get_terminal_skill(request, user, metadata, key[1], {})
+                _, skill_name, options = key
+                body = await get_terminal_skill(request, user, metadata, skill_name, {}, **dict(options))
                 if body is None:
                     _skill_bodies.pop(key, None)
                 else:

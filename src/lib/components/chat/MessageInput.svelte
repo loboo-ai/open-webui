@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TerminalContext } from '$lib/types';
 	import { resolveLocalizedFunction } from '$lib/utils/localizedContent';
 	import { functions as localizedFunctions } from '$lib/stores';
 	import DOMPurify from 'dompurify';
@@ -152,10 +153,12 @@
 	export let statusHandler: Function = () => {};
 	export let forkHandler: Function = () => {};
 	export let chatId = '';
+	export let terminalContext: TerminalContext | null = null;
 	export let contextUsage = null;
 	export let contextCompactionEnabled = false;
 	export let embedded = false;
 	export let callActive = false;
+	export let callEnabled = true;
 
 	export let autoScroll = false;
 	export let generating = false;
@@ -226,7 +229,7 @@
 
 	let showTerminalMenu = false;
 
-	export let messageQueue: { id: string; prompt: string; files: any[] }[] = [];
+	export let messageQueue: { id: string; prompt: string; files: any[]; error?: string }[] = [];
 	export let onQueueSendNow: (id: string) => void = () => {};
 	export let onQueueEdit: (id: string) => void = () => {};
 	export let onQueueDelete: (id: string) => void = () => {};
@@ -743,7 +746,7 @@
 	}
 
 	let chatInputContainerElement;
-	let chatInputElement;
+	let chatInputElement: RichTextInput;
 	let modelSelector;
 
 	let filesInputElement;
@@ -752,6 +755,45 @@
 	let inputFiles;
 
 	let showInputModal = false;
+	let showComparison = false;
+	let comparisonLoading = false;
+	let ComparisonModal: typeof import('../common/DiffEditorModal.svelte').default | null = null;
+	// Preserve the previous comparison description in the translation catalogs.
+	// $i18n.t('Uses the left working copy as your prompt.');
+	let comparisonTarget: {
+		chatId: string;
+		input: RichTextInput;
+		content: string;
+	} | null = null;
+
+	const openComparison = async () => {
+		if (comparisonLoading) return;
+		comparisonLoading = true;
+		const target = { chatId, input: chatInputElement };
+		try {
+			ComparisonModal = (await import('../common/DiffEditorModal.svelte')).default;
+			if (!target.input || target.chatId !== chatId || target.input !== chatInputElement) return;
+			comparisonTarget = { chatId, input: target.input, content: prompt };
+			showComparison = true;
+		} catch {
+			toast.error($i18n.t('Could not open comparison. Please try again.'));
+		} finally {
+			comparisonLoading = false;
+		}
+	};
+
+	const applyComparisonToPrompt = (text: string) => {
+		if (
+			!chatInputElement ||
+			comparisonTarget?.chatId !== chatId ||
+			comparisonTarget?.input !== chatInputElement ||
+			comparisonTarget?.content !== prompt
+		)
+			throw new Error($i18n.t('The prompt has changed. Reopen the comparison before applying.'));
+		// The editor's literal setter preserves mentions without expanding prompt variables.
+		if (text !== comparisonTarget.content) chatInputElement.setText(text);
+		void tick().then(() => focus());
+	};
 
 	export let dragged = false;
 	export let dropzoneId = 'chat-pane';
@@ -966,21 +1008,27 @@
 		files = [...files, fileItem];
 
 		if (filesystemUploadTerminal) {
+			fileItem.terminal_id = $selectedTerminalId;
+			fileItem.session_id = chatId || null;
 			try {
 				const cwd =
+					(terminalContext?.terminalId === $selectedTerminalId
+						? terminalContext?.currentDirectory
+						: null) ||
 					(
 						await getCwd(
 							filesystemUploadTerminal.url,
 							filesystemUploadTerminal.key,
-							chatId || undefined
+							fileItem.session_id || undefined
 						)
-					)?.cwd || '/';
+					)?.cwd;
+				if (!cwd) throw new Error($i18n.t('Could not determine the upload folder.'));
 				const uploadedFile = await uploadNewFileToTerminal(
 					filesystemUploadTerminal.url,
 					filesystemUploadTerminal.key,
 					cwd,
 					file,
-					chatId || undefined
+					fileItem.session_id || undefined
 				);
 
 				if (uploadedFile) {
@@ -1418,6 +1466,7 @@
 							files = [
 								...files,
 								{
+									...data,
 									type: 'filesystem',
 									id: path,
 									path,
@@ -1450,6 +1499,7 @@
 							'fork',
 							'status',
 							'model',
+							'compare',
 							'settings',
 							'temporary',
 							'skills:create'
@@ -1488,6 +1538,7 @@
 					onStatus: statusHandler,
 					onFork: forkHandler,
 					onModel: () => modelSelector?.open(),
+					onCompare: openComparison,
 					onSettings: () => showSettings.set(true),
 					onTemporary: temporaryHandler,
 					onCreateSkill: createSkillHandler,
@@ -1645,6 +1696,21 @@
 		};
 	});
 </script>
+
+{#if showComparison && ComparisonModal}
+	<svelte:component
+		this={ComparisonModal}
+		bind:show={showComparison}
+		title={$i18n.t('Compare text')}
+		initialContent={comparisonTarget?.content ?? ''}
+		applyLabel={$i18n.t('Use in prompt')}
+		applyDescription={$i18n.t('Uses the proposed revision as your prompt.')}
+		discardMessage={$i18n.t(
+			'Your comparison changes will be discarded. Your prompt will stay unchanged.'
+		)}
+		onApply={applyComparisonToPrompt}
+	/>
+{/if}
 
 <ToolServersModal
 	bind:show={showTools}
@@ -1843,6 +1909,7 @@
 									<QueuedMessageItem
 										id={queuedMessage.id}
 										content={queuedMessage.prompt}
+										error={queuedMessage.error ?? ''}
 										files={queuedMessage.files}
 										onSendNow={onQueueSendNow}
 										onEdit={onQueueEdit}
@@ -2131,7 +2198,8 @@
 															text,
 															history?.currentId
 																? createMessagesList(history, history.currentId)
-																: null
+																: null,
+															'general'
 														).catch((error) => {
 															console.log(error);
 
@@ -2208,7 +2276,10 @@
 															}
 														}
 
-														if (e.key === 'Escape') {
+														if (
+															$settings?.keyboardShortcuts !== false &&
+															matchKeybinding(e) === Shortcut.CLEAR_INPUT_SELECTIONS
+														) {
 															console.log('Escape');
 															atSelectedModel = undefined;
 															selectedToolIds = [];
@@ -2265,6 +2336,7 @@
 							<div class=" flex justify-between mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
 								<div class="ml-1 self-end flex items-center">
 									<InputMenu
+										onCompare={openComparison}
 										bind:files
 										selectedModels={selectedModelIds}
 										fileUploadCapableModels={getFilesystemUploadTerminal(
@@ -2709,7 +2781,7 @@
 											{/if}
 										{/if}
 
-										{#if !embedded && prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
+										{#if callEnabled && !embedded && prompt === '' && files.length === 0 && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.call ?? true))}
 											<div class=" flex items-center">
 												<!-- {$i18n.t('Call')} -->
 												<Tooltip

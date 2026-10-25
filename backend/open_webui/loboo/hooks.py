@@ -97,9 +97,11 @@ async def terminal_skills(
     return await cloud.terminal_skills(request, user, metadata, extra_params, wanted)
 
 
-async def terminal_skill(request, user: UserModel, metadata: dict, skill_name: str, extra_params: dict | None):
-    """对话里点名（$）的终端技能的正文：萝卜云用按人缓存的。"""
-    return await cloud.terminal_skill(request, user, metadata, skill_name, extra_params)
+async def terminal_skill(
+    request, user: UserModel, metadata: dict, skill_name: str, extra_params: dict | None, **options
+):
+    """对话里选用或点名（$）的终端技能的正文：萝卜云用按人缓存的；options 是 get_terminal_skill 的关键字参数。"""
+    return await cloud.terminal_skill(request, user, metadata, skill_name, extra_params, **options)
 
 
 async def terminal_agents_md(request, user: UserModel, metadata: dict, extra_params: dict | None) -> str | None:
