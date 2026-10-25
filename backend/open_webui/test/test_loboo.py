@@ -398,9 +398,20 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     async def ask(*answers, capabilities=None):
         cpa.replies, cpa.sent = list(answers), []
         events.clear()
-        # 带了附件时上游把检索内容拼进最后一条用户消息，原话另存在 base_user_prompt。
-        messages = [{'role': 'user', 'content': '<检索到的附件内容>\n上海明天要带伞吗'}]
-        metadata = {'base_user_prompt': '上海明天要带伞吗', 'model': {'info': {'meta': {'capabilities': capabilities}}}}
+        # 带了图片时上游在最后一条用户消息前面加附件标签，作为第一段文字；原话是前端发来的那条用户消息。
+        messages = [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': '<attached_files>\n<file type="file" id="f1"/>\n</attached_files>\n\n'},
+                    {'type': 'text', 'text': '上海明天要带伞吗'},
+                ],
+            }
+        ]
+        metadata = {
+            'user_message': {'content': '上海明天要带伞吗', 'files': [{'type': 'file', 'id': 'f1'}]},
+            'model': {'info': {'meta': {'capabilities': capabilities}}},
+        }
         return await web_search.search_internet(
             '上海今天天气', __user__=member, __event_emitter__=emit, __metadata__=metadata, __messages__=messages
         )
@@ -409,6 +420,9 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     result = await ask((200, from_memory), (200, searched))
     assert result.startswith('联网搜索结果（搜索时间：北京时间 ') and result.endswith(f'\n\n{text}')
     assert [(url, key) for url, key, _ in cpa.sent] == [('https://cpa.example/v1/responses', 'Bearer key-of-u1')] * 2
+    # 两次尝试是两个会话，CPA 才会重新选渠道，而不是按相同的请求粘回刚才那个。
+    keys = [body['prompt_cache_key'] for _, _, body in cpa.sent]
+    assert all(keys) and keys[0] != keys[1]
     body = cpa.sent[0][2]
     assert (body['model'], body['tool_choice'], body['tools'][0]['type']) == ('gpt-search', 'required', 'web_search')
     # 用户的原话一并带上：对话模型转述时可能把"明天"写错。

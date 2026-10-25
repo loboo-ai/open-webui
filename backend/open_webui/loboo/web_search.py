@@ -11,6 +11,7 @@ import contextlib
 import datetime as dt
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
@@ -99,9 +100,11 @@ async def search_internet(
     if not query.strip():
         return JSONCodec.dumps({'error': 'query is empty'})
     metadata = __metadata__ or {}
-    # 用户这一轮的原话。带了附件或知识库时，上游会把检索到的内容拼进最后一条用户消息，
-    # 拼之前的原话存在 base_user_prompt 里。
-    user_words = metadata.get('base_user_prompt') or get_last_user_message(__messages__ or [])
+    # 用户这一轮的原话，取前端发来的那条用户消息：发给模型的最后一条用户消息里，上游会在前面加附件标签
+    # （<attached_files>，带图片时它是第一段文字，base_user_prompt 取到的就只有它），带知识库时还拼了检索内容。
+    # 只有直接调 API、没有这条消息时才退回最后一条用户消息。
+    user_message = metadata.get('user_message')
+    user_words = user_message.get('content') if user_message else get_last_user_message(__messages__ or [])
 
     # 状态条一旦显示「搜索中」，每条出路都要收尾：消息里存的最后一个状态没结束，这条消息就一直转圈。
     await _status(__event_emitter__, {'action': 'web_search_queries_generated', 'queries': [query], 'done': False})
@@ -150,7 +153,9 @@ async def search(user: UserModel, query: str, user_words: str | None = None) -> 
     }
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            status, data = await _post(key, body)
+            # 每次尝试都是一个新会话：CPA 按请求开头把相同的请求粘在同一个渠道上（会话粘性），
+            # 不带自己的 prompt_cache_key，重试就会回到刚失败的渠道。
+            status, data = await _post(key, {**body, 'prompt_cache_key': uuid.uuid4().hex})
         except TimeoutError:
             outcome = f'timed out after {ATTEMPT_TIMEOUT_SECONDS}s'
         except (aiohttp.ClientError, ValueError) as e:
