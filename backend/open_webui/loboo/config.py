@@ -31,6 +31,10 @@ LOBOO_TRUSTED_ORIGINS = frozenset(
 # 重新点 ChatGPT（成员的密码是随机的，走不了密码登录）。只认 http(s)，没配时出错页给「前往登录」。
 _portal = os.environ.get('LOBOO_PORTAL_URL', '').strip()
 LOBOO_PORTAL_URL = _portal if urlsplit(_portal).scheme in ('http', 'https') else ''
+# 萝卜的公网源站，成员头像在它的 /_media/ 下，如 https://service.loboo-ai.com。LOBOO_SERVICE_URL 是账号应用的
+# 内网端口，那里没有 /_media。只认 http(s)；没配时不同步头像（也不生成 gravatar），昵称照常同步。
+_media = os.environ.get('LOBOO_MEDIA_ORIGIN', '').strip().rstrip('/')
+LOBOO_MEDIA_ORIGIN = _media if urlsplit(_media).scheme in ('http', 'https') else ''
 # 整页打开时在后台刷新配置，同一个人最多这么久一次。
 REFRESH_INTERVAL_SECONDS = 60
 # 调萝卜服务的超时；小程序进入时用户在等，不能太长。

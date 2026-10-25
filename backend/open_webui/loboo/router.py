@@ -8,6 +8,7 @@
 让你悄悄登进他的账号。
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -178,9 +179,13 @@ async def sso_redeem(
     except identity.IdentityMismatch as e:
         return pages.error(str(e), miniapp=miniapp, status_code=409)
     credentials.remember(user.id, profile)
+    syncing = credentials.sync_profile(user, profile)
     direct = _granted_basis(basis, ticket)
     log.info('loboo: sign-in for user %s %s', user.id, f'directly from {direct}' if direct else 'awaits confirmation')
     if direct:
+        if syncing:
+            # 第一次进入或萝卜资料刚变：最多等 1 秒，让这次打开就看到新昵称和头像；超时不取消，后台照样做完。
+            await asyncio.wait({syncing}, timeout=1)
         return await _sign_in(request, user, target, db)
     return pages.confirm(profile.display_name, profile.browser_login, _grant(user.id), target)
 

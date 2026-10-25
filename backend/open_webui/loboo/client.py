@@ -2,6 +2,7 @@
 
 import datetime as dt
 import logging
+import re
 from dataclasses import dataclass
 
 import aiohttp
@@ -40,6 +41,26 @@ class Profile:
     state: str
     key: str | None
     ends_at: float | None
+    # 萝卜答复里有没有头像字段（没有时是萝卜还没上线这个字段，不能当成"没设头像"），以及头像的站点路径。
+    avatar_known: bool = False
+    avatar_path: str | None = None
+
+
+# 萝卜头像的站点路径：/_media/<内容的 sha256>.<webp|jpg>（loboo-mono/packages/shared/src/media-path.ts）。
+_AVATAR_PATH = re.compile(r'/_media/[a-f0-9]{64}\.(webp|jpg)')
+
+
+def _avatar(user: dict) -> tuple[bool, str | None]:
+    """头像不合规时当作不知道，只记日志：不能因为头像让整份配置（连同 Key）失效。"""
+    if 'avatarUrl' not in user:
+        return False, None
+    value = user['avatarUrl']
+    if value is None:
+        return True, None
+    if isinstance(value, str) and _AVATAR_PATH.fullmatch(value):
+        return True, value
+    log.warning('loboo: ignoring malformed avatarUrl for %s', user.get('id'))
+    return False, None
 
 
 def _text(value, *, optional=False) -> str | None:
@@ -62,6 +83,7 @@ def _profile(data) -> Profile:
         key, ends = None, None
     else:
         raise ValueError(f'unknown credential state {state!r}')
+    avatar_known, avatar_path = _avatar(user)
     return Profile(
         user_id=_text(user['id']),
         display_name=_text(user['displayName']),
@@ -69,6 +91,8 @@ def _profile(data) -> Profile:
         state=state,
         key=key,
         ends_at=ends,
+        avatar_known=avatar_known,
+        avatar_path=avatar_path,
     )
 
 

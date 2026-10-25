@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException
 
-from open_webui.loboo import client, config, identity
+from open_webui.loboo import client, config, identity, profile_sync
 from open_webui.models.users import UserModel
 
 log = logging.getLogger(__name__)
@@ -55,20 +55,21 @@ def remember(user_id: str, profile: client.Profile) -> Entry:
     return entry
 
 
-async def _fetch(user: UserModel) -> Entry:
+async def _fetch(user: UserModel) -> tuple[Entry, client.Profile | None]:
+    """配置，以及确认是本人之后的萝卜资料（用来同步昵称和头像）。"""
     linked = identity.loboo_id(user)
     try:
         profile = await (client.profile_by_id(linked) if linked else client.profile_by_login(user.email))
     except client.LobooError as e:
         if e.code == client.ACCOUNT_NOT_FOUND:
-            return Entry('unlinked', None, None, time.time())
+            return Entry('unlinked', None, None, time.time()), None
         if e.code == client.ACCOUNT_NOT_ACTIVATED:
-            return Entry('disabled', None, None, time.time())
+            return Entry('disabled', None, None, time.time()), None
         raise client.LobooUnavailable(str(e)) from e
-    # 按登录名找到的要先确认是同一个人，对不上时当作没有对应的萝卜账号，不用别人的 Key。
+    # 按登录名找到的要先确认是同一个人，对不上时当作没有对应的萝卜账号，不用别人的 Key，也不同步别人的资料。
     if not linked and not await identity.link(user, profile.user_id):
-        return Entry('unlinked', None, None, time.time())
-    return Entry(profile.state, profile.key, profile.ends_at, time.time())
+        return Entry('unlinked', None, None, time.time()), None
+    return Entry(profile.state, profile.key, profile.ends_at, time.time()), profile
 
 
 async def refresh(user: UserModel) -> Entry:
@@ -83,8 +84,10 @@ async def refresh(user: UserModel) -> Entry:
         if previous and previous.fetched_at >= started:
             return previous
         _attempted_at[user.id] = time.time()
-        entry = await _fetch(user)
+        entry, profile = await _fetch(user)
         _entries[user.id] = entry
+    if profile is not None:
+        sync_profile(user, profile)
     if entry.state == 'disabled' and (previous is None or previous.state != 'disabled'):
         # 萝卜里停用了：吊销这个人在 Open WebUI 的全部会话。
         from open_webui.utils.auth import revoke_user_tokens
@@ -134,9 +137,22 @@ def refresh_in_background(user: UserModel) -> None:
     if now - _attempted_at.get(user.id, 0) < config.REFRESH_INTERVAL_SECONDS:
         return
     _attempted_at[user.id] = now
-    task = asyncio.create_task(_refresh_quietly(user))
+    _spawn(_refresh_quietly(user))
+
+
+def sync_profile(user: UserModel, profile: client.Profile) -> asyncio.Task | None:
+    """萝卜的昵称或头像变了时在后台同步（profile_sync.py），返回那个任务；没有要同步的返回 None。"""
+    if not profile_sync.pending(user, profile):
+        return None
+    return _spawn(profile_sync.sync(user.id, profile))
+
+
+def _spawn(coroutine) -> asyncio.Task:
+    """后台任务要有人持有引用，否则可能做到一半被回收。"""
+    task = asyncio.create_task(coroutine)
     _background.add(task)
     task.add_done_callback(_background.discard)
+    return task
 
 
 async def _refresh_quietly(user: UserModel) -> None:

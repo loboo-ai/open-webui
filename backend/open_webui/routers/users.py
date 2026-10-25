@@ -853,6 +853,11 @@ async def get_user_oauth_sessions_by_id(
 ############################
 
 
+# loboo fork: avatars change behind a fixed URL (Loboo sync, the settings page), so browsers must revalidate
+# instead of reusing a heuristically cached default image for hours.
+PROFILE_IMAGE_CACHE_HEADERS = {'Cache-Control': 'no-cache'}
+
+
 @router.get('/{user_id}/profile/image')
 async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_user)):
     user = await Users.get_user_by_id(user_id)
@@ -862,7 +867,7 @@ async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_u
                 if ENABLE_PROFILE_IMAGE_URL_FORWARDING:
                     return Response(
                         status_code=status.HTTP_302_FOUND,
-                        headers={'Location': user.profile_image_url},
+                        headers={'Location': user.profile_image_url, **PROFILE_IMAGE_CACHE_HEADERS},
                     )
                 # When forwarding is disabled, fall through to the
                 # default image to prevent client-side IP/UA/Referer
@@ -875,7 +880,7 @@ async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_u
                     media_type = header.split(';')[0].lstrip('data:').lower()
 
                     if media_type not in PROFILE_IMAGE_ALLOWED_MIME_TYPES:
-                        return FileResponse(f'{STATIC_DIR}/user.png')
+                        return FileResponse(f'{STATIC_DIR}/user.png', headers=PROFILE_IMAGE_CACHE_HEADERS)
 
                     return StreamingResponse(
                         image_buffer,
@@ -883,11 +888,12 @@ async def get_user_profile_image_by_id(user_id: str, user=Depends(get_verified_u
                         headers={
                             'Content-Disposition': 'inline',
                             'X-Content-Type-Options': 'nosniff',
+                            **PROFILE_IMAGE_CACHE_HEADERS,
                         },
                     )
                 except Exception as e:
                     pass
-        return FileResponse(f'{STATIC_DIR}/user.png')
+        return FileResponse(f'{STATIC_DIR}/user.png', headers=PROFILE_IMAGE_CACHE_HEADERS)
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

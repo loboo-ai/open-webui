@@ -255,6 +255,7 @@ async def test_loboo_sso_redeems_only_once_the_page_runs(monkeypatch):
     monkeypatch.setattr(client, 'redeem', redeem)
     monkeypatch.setattr(identity, 'sso_user', sso_user)
     monkeypatch.setattr(credentials, 'remember', lambda user_id, profile: None)
+    monkeypatch.setattr(credentials, 'sync_profile', lambda user, profile: None)
     monkeypatch.setattr(sso_router, '_sign_in', sign_in)
 
     def request(method, **headers):
@@ -509,3 +510,120 @@ async def test_terminal_skill_refuses_files_view_skill_does_not_list(monkeypatch
         result = await read(path)
         assert "'INSTALL.md'" in result['error'], path
     assert not any(request.startswith('/files/read') for request in requests)
+
+def _png(size: int) -> bytes:
+    out = io.BytesIO()
+    Image.new('RGB', (size, size), (230, 120, 30)).save(out, 'PNG')
+    return out.getvalue()
+
+
+async def _loboo_member(name: str = '成员'):
+    import uuid
+
+    from open_webui.models.users import Users
+
+    user = await Users.insert_new_user(str(uuid.uuid4()), name, f'{uuid.uuid4().hex}@loboo.ai', role='user')
+    await Users.update_user_oauth_by_id(user.id, identity.PROVIDER, 'lb-' + user.id)
+    return user.id
+
+
+def _loboo_profile(user_id: str, name: str, avatar: str | None, *, known: bool = True) -> client.Profile:
+    return client.Profile('lb-' + user_id, name, None, 'active', 'k', None, avatar_known=known, avatar_path=avatar)
+
+
+@pytest.mark.asyncio
+async def test_loboo_profile_sync_overwrites_only_when_loboo_changes(monkeypatch):
+    from open_webui.loboo import profile_sync
+    from open_webui.models.users import Users
+
+    monkeypatch.setattr(config, 'LOBOO_MEDIA_ORIGIN', 'https://loboo.example')
+    fetched = []
+
+    async def download(url):
+        fetched.append(url)
+        return _png(512)
+
+    monkeypatch.setattr(profile_sync, '_download', download)
+    user_id = await _loboo_member()
+    first, second = '/_media/' + 'a' * 64 + '.webp', '/_media/' + 'b' * 64 + '.webp'
+
+    # 第一次：套用萝卜的昵称和头像（缩成 250px webp），sub 保留。
+    await profile_sync.sync(user_id, _loboo_profile(user_id, '张三', first))
+    user = await Users.get_user_by_id(user_id)
+    assert user.name == '张三' and fetched == ['https://loboo.example' + first]
+    assert user.profile_image_url.startswith('data:image/webp;base64,')
+    image = Image.open(io.BytesIO(base64.b64decode(user.profile_image_url.split(',', 1)[1])))
+    assert image.size == (250, 250)
+    assert user.oauth['loboo'] == {'sub': 'lb-' + user_id, 'name': '张三', 'avatar': first}
+
+    # 成员在 LoboOS 自己改了，萝卜没变：不覆盖，也不再下载。
+    await Users.update_user_by_id(user_id, {'name': '自己改的', 'profile_image_url': '/user.png'})
+    await profile_sync.sync(user_id, _loboo_profile(user_id, '张三', first))
+    user = await Users.get_user_by_id(user_id)
+    assert (user.name, user.profile_image_url, len(fetched)) == ('自己改的', '/user.png', 1)
+
+    # 萝卜改了：覆盖。萝卜还没给头像字段时只同步昵称，不碰头像。
+    await profile_sync.sync(user_id, _loboo_profile(user_id, '张三丰', second))
+    user = await Users.get_user_by_id(user_id)
+    assert user.name == '张三丰' and user.profile_image_url.startswith('data:image/webp') and len(fetched) == 2
+    await profile_sync.sync(user_id, _loboo_profile(user_id, '张三', None, known=False))
+    user = await Users.get_user_by_id(user_id)
+    assert user.name == '张三' and user.oauth['loboo']['avatar'] == second and len(fetched) == 2
+
+
+@pytest.mark.asyncio
+async def test_loboo_avatar_falls_back_to_gravatar_and_retries(monkeypatch):
+    import hashlib
+
+    import aiohttp
+    from open_webui.loboo import profile_sync
+    from open_webui.models.users import Users
+
+    monkeypatch.setattr(config, 'LOBOO_MEDIA_ORIGIN', 'https://loboo.example')
+    answers, fetched = [aiohttp.ClientError('down'), b'not an image', _png(250), _png(512)], []
+
+    async def download(url):
+        fetched.append(url)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(profile_sync, '_download', download)
+    user_id = await _loboo_member()
+    no_avatar = _loboo_profile(user_id, '成员', None)
+
+    # 萝卜没设头像：取 gravatar 的 retro 图案，哈希用用户 id；连不上、拿到的不是图片都不写记号，
+    # 一小时内不再试（免得每次打开都白等），过后再试。
+    for _ in range(2):
+        await profile_sync.sync(user_id, no_avatar)
+        user = await Users.get_user_by_id(user_id)
+        assert user.profile_image_url == '/user.png' and 'avatar' not in user.oauth['loboo']
+        attempts = len(fetched)
+        await profile_sync.sync(user_id, no_avatar)
+        assert len(fetched) == attempts
+        profile_sync._failed_at.clear()
+    await profile_sync.sync(user_id, no_avatar)
+    user = await Users.get_user_by_id(user_id)
+    digest = hashlib.sha256(user_id.encode()).hexdigest()
+    assert fetched[-1] == f'https://www.gravatar.com/avatar/{digest}?s=250&d=retro&r=g&f=y'
+    assert user.profile_image_url.startswith('data:image/png') and user.oauth['loboo']['avatar'] == 'gravatar'
+
+    # 萝卜以后设了头像：覆盖 gravatar。
+    avatar = '/_media/' + 'c' * 64 + '.jpg'
+    await profile_sync.sync(user_id, _loboo_profile(user_id, '成员', avatar))
+    user = await Users.get_user_by_id(user_id)
+    assert fetched[-1] == 'https://loboo.example' + avatar and user.oauth['loboo']['avatar'] == avatar
+
+
+@pytest.mark.asyncio
+async def test_loboo_profile_image_is_never_cached():
+    from open_webui.models.users import Users
+    from open_webui.routers import users
+
+    user_id = await _loboo_member()
+    default = await users.get_user_profile_image_by_id(user_id, user=None)
+    data_url = 'data:image/png;base64,' + base64.b64encode(_png(8)).decode()
+    await Users.update_user_by_id(user_id, {'profile_image_url': data_url})
+    synced = await users.get_user_profile_image_by_id(user_id, user=None)
+    assert default.headers['cache-control'] == synced.headers['cache-control'] == 'no-cache'
