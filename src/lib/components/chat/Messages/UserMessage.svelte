@@ -58,16 +58,23 @@
 
 	let message = structuredClone(history.messages[messageId]);
 	$: authorId = message.user_id || message.user?.id || user?.id;
+	// loboo fork: own messages take the member's current name (renames sync from Loboo), not the copy saved with
+	// the message.
 	$: author =
-		message.user?.id === authorId
-			? message.user
-			: $_user?.id === authorId
-				? $_user
+		$_user?.id === authorId
+			? $_user
+			: message.user?.id === authorId
+				? message.user
 				: user?.id === authorId
 					? user
 					: null;
 	$: isOwn = Boolean($_user?.id && authorId === $_user.id);
 	$: authorName = author?.name || $i18n.t('Unknown User');
+	// loboo fork: own bubbles carry the avatar and name too, mirrored on the right like 萝卜哥 on the left.
+	$: showAuthor =
+		!compactPreview &&
+		!(message?.meta?.internal === true && ['subagent', 'timer'].includes(message?.meta?.type));
+	$: authorOnRight = showAuthor && ($settings?.chatBubble ?? true) && isOwn;
 	let timerExpanded = false;
 	$: if (history.messages) {
 		const source = history.messages[messageId];
@@ -146,14 +153,16 @@
 		? compactPreview
 			? 'my-2'
 			: 'mb-2'
-		: ''}"
+		: ''} {authorOnRight ? 'flex-row-reverse' : ''}"
 	dir={$settings.chatDirection}
 	id="message-{message.id}"
 	style="scroll-margin-top: 3rem;"
 >
-	{#if !compactPreview && (!($settings?.chatBubble ?? true) || !isOwn) && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
+	{#if showAuthor}
 		<div
-			class="shrink-0 me-2 {($settings?.chatBubble ?? true) ? 'mt-6' : 'hidden @lg:flex mt-0.5'}"
+			class="shrink-0 {authorOnRight
+				? 'ms-2 flex mt-0.5'
+				: `me-2 ${($settings?.chatBubble ?? true) ? 'mt-6' : 'hidden @lg:flex mt-0.5'}`}"
 		>
 			<!-- LICENSE covers this Open WebUI fallback logo.
 			Do not alter, remove, obscure, or replace it except as LICENSE permits:
@@ -171,9 +180,15 @@
 			message?.meta?.type === 'subagent') ||
 		(message?.meta?.internal === true && message?.meta?.type === 'timer')
 			? ''
-			: 'pl-1'}"
+			: authorOnRight
+				? 'pe-1'
+				: 'pl-1'}"
 	>
-		{#if !compactPreview && (!($settings?.chatBubble ?? true) || !isOwn) && !(message?.meta?.internal === true && message?.meta?.type === 'subagent') && !(message?.meta?.internal === true && message?.meta?.type === 'timer')}
+		{#if authorOnRight}
+			<div class="flex justify-end">
+				<Name><span class="line-clamp-1 text-black dark:text-white">{authorName}</span></Name>
+			</div>
+		{:else if showAuthor}
 			<div
 				class={($settings?.chatBubble ?? true)
 					? 'mb-1 ps-2 text-xs text-gray-400 dark:text-gray-500'
