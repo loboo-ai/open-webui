@@ -38,6 +38,26 @@
 	const controller = new AbortController();
 	let polling = false;
 	let disposed = false;
+	// loboo fork: every request reaches 萝卜云 and keeps it awake, so the dock polls every second only while a running
+	// process is on screen, every 15 seconds otherwise, and not while the page is hidden.
+	let pollTimer: ReturnType<typeof setTimeout> | undefined;
+	$: watching =
+		expanded &&
+		tabs.some((tab) => tab.id === activeId && tab.available && tab.status === 'running');
+	$: if (connection) restartPolling(watching);
+
+	async function pollLoop() {
+		await poll();
+		clearTimeout(pollTimer);
+		if (!disposed && !document.hidden) pollTimer = setTimeout(pollLoop, watching ? 1000 : 15000);
+	}
+
+	// Takes the new pace now rather than after the pending wait (up to 15 seconds). The argument only makes the
+	// reactive statement above rerun when the pace changes.
+	function restartPolling(_watching: boolean) {
+		clearTimeout(pollTimer);
+		void pollLoop();
+	}
 
 	$: if (expanded && activeId === 'shell') shellOpened = true;
 	$: running = tabs.filter((tab) => tab.status === 'running' && tab.available).length;
@@ -149,14 +169,13 @@
 			($settings as { terminalServers?: { url: string; key?: string }[] })?.terminalServers ?? [],
 			localStorage.getItem('token') ?? ''
 		);
-		poll();
-		const interval = setInterval(poll, 1000);
-		document.addEventListener('visibilitychange', poll);
+		const onVisibilityChange = () => restartPolling(watching);
+		document.addEventListener('visibilitychange', onVisibilityChange);
 		return () => {
 			disposed = true;
 			controller.abort();
-			clearInterval(interval);
-			document.removeEventListener('visibilitychange', poll);
+			clearTimeout(pollTimer);
+			document.removeEventListener('visibilitychange', onVisibilityChange);
 		};
 	});
 </script>

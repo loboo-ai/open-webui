@@ -6,6 +6,8 @@
 在小程序里、或从萝卜的页面跳过来时直接进入（打开地址时判断，签名后随提交页带回）；其他情况（别人发来的链接、
 从别的网站跳过来、桌面端交给系统浏览器）先显示确认页，用户点继续后同源 POST 再签发，防止别人用自己的票据做链接，
 让你悄悄登进他的账号。
+
+另有萝卜云文件面板用的两个接口：查容器醒着没有、唤醒（/cloud/state、/cloud/wake，见 cloud.py）。
 """
 
 import asyncio
@@ -17,13 +19,14 @@ from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from open_webui.env import WEBUI_SECRET_KEY
 from open_webui.internal.db import get_async_session
-from open_webui.loboo import client, config, credentials, identity, pages
+from open_webui.loboo import client, cloud, config, credentials, identity, pages
 from open_webui.models.users import Users
-from open_webui.utils.auth import create_signin_response
+from open_webui.utils.auth import create_signin_response, get_verified_user
 
 log = logging.getLogger(__name__)
 
@@ -203,3 +206,19 @@ async def confirm(
     if user is None or user.role != 'user':
         return pages.error('确认已过期，请重新进入。', miniapp=miniapp)
     return await _sign_in(request, user, safe_next(next_path), db)
+
+
+class CloudWakeForm(BaseModel):
+    terminal_id: str
+
+
+@router.get('/cloud/state')
+async def cloud_state(terminal_id: str, user=Depends(get_verified_user)):
+    """萝卜云的文件面板挂载前问：这个人的容器醒着没有（不拉起、不续命，见 cloud.terminal_state）。"""
+    return await cloud.terminal_state(user, terminal_id)
+
+
+@router.post('/cloud/wake')
+async def cloud_wake(request: Request, form: CloudWakeForm, user=Depends(get_verified_user)):
+    """面板上点唤醒：给 loboo-cli 写好本人的 Key，顺带拉起容器。"""
+    return {'ok': await cloud.wake(request, user, form.terminal_id)}

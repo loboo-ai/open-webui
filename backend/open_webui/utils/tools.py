@@ -7,6 +7,7 @@ import inspect
 import logging
 import os
 import re
+import time
 from functools import cache, partial, update_wrapper
 from typing import (
     Any,
@@ -52,6 +53,7 @@ from open_webui.tools.builtin import (
     calculate_timestamp,
     create_automation,
     create_calendar_event,
+    create_skill,
     create_tasks,
     delegate_task,
     delete_automation,
@@ -76,6 +78,7 @@ from open_webui.tools.builtin import (
     query_knowledge_bases,
     query_knowledge_files,
     read_memory_path,
+    read_skill_file,
     replace_memory_content,
     replace_note_content,
     search_calendar_events,
@@ -92,6 +95,7 @@ from open_webui.tools.builtin import (
     update_automation,
     update_calendar_event,
     update_memory,
+    update_skill_files,
     update_task,
     view_channel_message,
     view_channel_thread,
@@ -100,9 +104,6 @@ from open_webui.tools.builtin import (
     view_knowledge_file,
     view_note,
     view_skill,
-    read_skill_file,
-    create_skill,
-    update_skill_files,
     write_note,
 )
 from open_webui.utils.access_control import has_access, has_connection_access, has_permission
@@ -126,6 +127,7 @@ from open_webui.utils.plugin import (
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
+    is_terminal_orchestrator,
     terminal_context_available,
     terminal_context_config,
     terminal_context_id,
@@ -1396,7 +1398,8 @@ async def set_terminal_servers(request: Request):
             }
         )
 
-    request.app.state.TERMINAL_SERVERS = await get_tool_servers_data(server_configs)
+    previous = {server.get('id'): server for server in getattr(request.app.state, 'TERMINAL_SERVERS', None) or []}
+    servers = await get_tool_servers_data(server_configs)
 
     # Fetch system prompts concurrently (runs at cache time, not per-request)
     connections_by_id = {c.get('id'): c for c in connections if c.get('id')}
@@ -1415,9 +1418,13 @@ async def set_terminal_servers(request: Request):
             server['system_prompt'] = prompt
 
     await asyncio.gather(
-        *[_fetch_system_prompt(s) for s in request.app.state.TERMINAL_SERVERS],
+        *[_fetch_system_prompt(s) for s in servers],
         return_exceptions=True,
     )
+
+    # loboo fork: the new list goes live only once its prompts are in, so messages meanwhile keep the old ones.
+    request.app.state.TERMINAL_SERVERS = _keep_last_orchestrators(servers, previous, connections_by_id)
+    request.app.state.TERMINAL_SERVERS_LOADED_AT = time.monotonic()
 
     if request.app.state.redis is not None:
         await request.app.state.redis.set(
@@ -1447,11 +1454,71 @@ async def get_terminal_servers(request: Request):
                     terminal_servers = None
         except Exception as e:
             log.error(f'Error fetching terminal_servers from Redis: {e}')
+    elif getattr(request.app.state, 'TERMINAL_SERVERS', None):
+        # loboo fork: without Redis, reloading on every message would wake the system terminal each time. Keep the
+        # specs for TERMINAL_SERVERS_CACHE_SECONDS; once stale, answer from them and reload in the background.
+        # Saving the connections in the admin settings reloads them at once (routers/configs.py).
+        _reload_terminal_servers(request, older_than=TERMINAL_SERVERS_CACHE_SECONDS)
+        terminal_servers = request.app.state.TERMINAL_SERVERS
 
     if terminal_servers is None:
         terminal_servers = await set_terminal_servers(request)
 
     return terminal_servers
+
+
+def _keep_last_orchestrators(servers: list, previous: dict, connections_by_id: dict) -> list:
+    """loboo fork: a reload that misses an enabled Terminals orchestrator (unreachable for a moment) or its prompt
+    (its system terminal still starting, past the 3 s timeout) keeps what the last load had for it. Plain Open
+    Terminal servers take the new result as it is."""
+    loaded = {server.get('id') for server in servers}
+    for server_id, connection in connections_by_id.items():
+        last = previous.get(server_id)
+        if not last or not connection.get('enabled', True) or not is_terminal_orchestrator(connection):
+            continue
+        if server_id not in loaded:
+            servers.append(last)
+        else:
+            server = next(server for server in servers if server.get('id') == server_id)
+            if not server.get('system_prompt') and last.get('system_prompt'):
+                server['system_prompt'] = last['system_prompt']
+    return servers
+
+
+def _retry_missing_prompt(request: Request, server_data: dict) -> None:
+    """loboo fork: the system terminal was still starting when the specs loaded (its cold start outlasts the
+    prompt's 3 s timeout); load them again shortly, from the system terminal rather than the member's. If that
+    reload has no prompt either (the policy turned it off), wait out the cache period before asking again."""
+    if server_data.get('system_prompt'):
+        request.app.state.TERMINAL_PROMPT_RETRIED = False
+        return
+    retried = getattr(request.app.state, 'TERMINAL_PROMPT_RETRIED', False)
+    if _reload_terminal_servers(request, older_than=TERMINAL_SERVERS_CACHE_SECONDS if retried else 60):
+        request.app.state.TERMINAL_PROMPT_RETRIED = True
+
+
+# loboo fork: see get_terminal_servers.
+TERMINAL_SERVERS_CACHE_SECONDS = 3600
+_terminal_servers_reload: asyncio.Task | None = None
+
+
+def _reload_terminal_servers(request: Request, older_than: float) -> bool:
+    """Reload the specs in the background once they are older than `older_than` seconds, one reload at a time.
+    Returns whether a reload started."""
+    global _terminal_servers_reload
+    if time.monotonic() - getattr(request.app.state, 'TERMINAL_SERVERS_LOADED_AT', 0) <= older_than:
+        return False
+    if _terminal_servers_reload is not None and not _terminal_servers_reload.done():
+        return False
+
+    async def reload():
+        try:
+            await set_terminal_servers(request)
+        except Exception as e:
+            log.warning(f'Failed to reload terminal servers: {e}')
+
+    _terminal_servers_reload = asyncio.create_task(reload())
+    return True
 
 
 async def get_terminal_tools(
@@ -1488,6 +1555,9 @@ async def get_terminal_tools(
     terminal_servers = await get_terminal_servers(request)
     server_data = next((server for server in terminal_servers if server.get('id') == terminal_id), None)
     if server_data is None:
+        # loboo fork: cached specs that never had this terminal (it was unreachable when they loaded) are reloaded
+        # within a minute rather than at the end of the cache period.
+        _reload_terminal_servers(request, older_than=60)
         raise RuntimeError(f"Terminal server '{terminal_id}' is unavailable")
 
     specs = server_data.get('specs', [])
@@ -1529,7 +1599,14 @@ async def get_terminal_tools(
     # Fetch live with the user's credentials so prompt changes apply without a restart
     connection_config = connection.get('config') or {}
     terminal_cwd = None
-    if connection_config.get('working_directory_context', True):
+    if is_terminal_orchestrator(connection):
+        # loboo fork: Terminals gives every member the same prompt (only the container's hostname differs), so use the
+        # copy loaded with the specs: fetching it here would wake the member's terminal on every message.
+        if connection_config.get('working_directory_context', True):
+            terminal_cwd = await get_terminal_cwd(server_data['url'], headers, cookies)
+        _retry_missing_prompt(request, server_data)
+        system_prompt = None
+    elif connection_config.get('working_directory_context', True):
         terminal_cwd, system_prompt = await asyncio.gather(
             get_terminal_cwd(server_data['url'], headers, cookies),
             get_terminal_system_prompt(server_data['url'], headers, cookies),

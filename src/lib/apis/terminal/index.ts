@@ -75,6 +75,7 @@ export type TerminalSkill = {
 };
 
 import { WEBUI_API_BASE_URL } from '$lib/constants';
+import { rememberTerminalSkills, terminalSkillsWhileAsleep } from '$lib/loboo';
 
 export type TerminalConnection = {
 	selector: string;
@@ -352,6 +353,9 @@ export const listTerminalSkills = async (
 	chatId?: string | null
 ): Promise<TerminalSkill[]> => {
 	if (!connection) return [];
+	// loboo fork: while 萝卜云 sleeps the / and $ menus reuse the last list instead of waking it.
+	const lastSkills = await terminalSkillsWhileAsleep(connection);
+	if (lastSkills) return lastSkills;
 
 	const skills = await terminalRequest<TerminalSkill[]>(
 		connection,
@@ -359,15 +363,18 @@ export const listTerminalSkills = async (
 		'/skills'
 	).catch(() => []);
 
-	return (Array.isArray(skills) ? skills : []).map((skill) => ({
-		...skill,
-		is_active: true,
-		source: 'terminal',
-		terminal_path: skill.terminal_path ?? (skill as any).location ?? '',
-		terminal_scope: skill.terminal_scope ?? (skill as any).scope ?? 'global',
-		terminal_selector: connection.selector,
-		terminal_name: connection.selector
-	}));
+	return rememberTerminalSkills(
+		connection.selector,
+		(Array.isArray(skills) ? skills : []).map((skill) => ({
+			...skill,
+			is_active: true,
+			source: 'terminal',
+			terminal_path: skill.terminal_path ?? (skill as any).location ?? '',
+			terminal_scope: skill.terminal_scope ?? (skill as any).scope ?? 'global',
+			terminal_selector: connection.selector,
+			terminal_name: connection.selector
+		}))
+	);
 };
 
 export const downloadFileBlob = async (

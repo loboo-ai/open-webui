@@ -1,4 +1,7 @@
-"""上游代码调用的入口：密码登录、整页打开、给模型连接和图片生成取 Key、对话带上终端。没配置萝卜服务时都不做事。"""
+"""
+上游代码调用的入口：密码登录、整页打开、给模型连接和图片生成取 Key、对话带上终端。
+没配置萝卜服务时只剩萝卜云的按需拉起和上下文缓存（见 cloud.py），其余都不做事。
+"""
 
 import logging
 
@@ -73,11 +76,35 @@ async def image_key(base_url: str, user: UserModel | None) -> str | None:
     return await credentials.key_for(user)
 
 
-async def on_terminal_tools(request, user: UserModel, terminal_id: str, metadata: dict) -> None:
-    """对话已带上终端的工具：萝卜云里给 loboo-cli 放好本人的 Key（见 cloud.py）。不会让对话失败。"""
-    if not config.ENABLED:
-        return
-    await cloud.provide_cli_key(request, user, terminal_id, metadata)
+async def on_terminal_tools(
+    request, user: UserModel, terminal_id: str, metadata: dict, tools: dict, event_emitter
+) -> dict:
+    """
+    对话带上终端工具时：萝卜云的工具在这一轮第一次调用前才给 loboo-cli 写本人的 Key、拉起容器（见 cloud.py）。
+    不会让对话失败；其他终端的工具原样返回。
+    """
+    try:
+        return await cloud.wrap_terminal_tools(request, user, terminal_id, metadata, tools, event_emitter)
+    except Exception:
+        log.exception('loboo: cloud terminal tools for user %s left as they are', user.id)
+        return tools
+
+
+async def terminal_skills(
+    request, user: UserModel, metadata: dict, extra_params: dict | None, wanted=()
+) -> list | None:
+    """这条消息的终端技能列表：萝卜云用按人缓存的，不为一条普通消息拉起容器；wanted 是点名或选用的技能 id。"""
+    return await cloud.terminal_skills(request, user, metadata, extra_params, wanted)
+
+
+async def terminal_skill(request, user: UserModel, metadata: dict, skill_name: str, extra_params: dict | None):
+    """对话里点名（$）的终端技能的正文：萝卜云用按人缓存的。"""
+    return await cloud.terminal_skill(request, user, metadata, skill_name, extra_params)
+
+
+async def terminal_agents_md(request, user: UserModel, metadata: dict, extra_params: dict | None) -> str | None:
+    """这条消息的终端 AGENTS.md：萝卜云用按人缓存的。"""
+    return await cloud.terminal_agents_md(request, user, metadata, extra_params)
 
 
 def _within_cpa(target: str) -> bool:

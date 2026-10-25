@@ -24,6 +24,9 @@
 		loading = false;
 	};
 
+	// loboo fork: every request reaches 萝卜云 and keeps it awake, so the ports refresh every 5 seconds only while
+	// this section is open and the page visible; otherwise they are read once when the list mounts, and on refresh.
+	let pageVisible = !document.hidden;
 	const startPolling = () => {
 		stopPolling();
 		loadPorts();
@@ -46,15 +49,21 @@
 		window.open(url, '_blank', 'noopener,noreferrer');
 	};
 
-	// Start polling when baseUrl is available
 	$: if (baseUrl) {
+		loadPorts();
+	}
+	$: if (baseUrl && expanded && pageVisible) {
 		startPolling();
+	} else {
+		stopPolling();
 	}
 
 	onDestroy(() => {
 		stopPolling();
 	});
 </script>
+
+<svelte:document on:visibilitychange={() => (pageVisible = !document.hidden)} />
 
 <div class="px-2 py-1">
 	<button

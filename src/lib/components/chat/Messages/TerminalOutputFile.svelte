@@ -19,6 +19,11 @@
 	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
 	import { fileIconName } from '$lib/components/chat/FileNav/fileIcon';
 	import { normalizeDocumentTargetPage } from '$lib/utils/documentPreview';
+	import {
+		LOAD_PREVIEW_LABEL,
+		PREVIEW_ASLEEP_TEXT,
+		getCloudState
+	} from '$lib/loboo';
 
 	export let item: any;
 	export let chatId = '';
@@ -67,7 +72,19 @@
 			  getExt(path) === 'svg'
 			? 'h-96'
 			: 'h-72';
-	$: if (expanded && terminal && path && previewKey !== loadedKey && !loading) {
+	// loboo fork: opening an old chat must not wake a sleeping 萝卜云, so the card asks first (loading meanwhile)
+	// and, if it sleeps, loads only when asked to.
+	let cloudChecked = false;
+	let previewAsleep = false;
+	$: if (terminal && !cloudChecked) {
+		cloudChecked = true;
+		loading = true;
+		void getCloudState(localStorage.token, selector).then((state) => {
+			previewAsleep = state === 'sleeping';
+			loading = false;
+		});
+	}
+	$: if (expanded && terminal && path && previewKey !== loadedKey && !loading && !previewAsleep) {
 		void loadPreview(previewKey);
 	}
 
@@ -282,6 +299,18 @@
 		{#if unavailable}
 			<div class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
 				{t('Terminal unavailable')}
+			</div>
+		{:else if previewAsleep}
+			<!-- loboo fork: see previewAsleep -->
+			<div class="flex items-center gap-2 px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+				<span>{PREVIEW_ASLEEP_TEXT}</span>
+				<button
+					type="button"
+					class="rounded-lg bg-gray-100 px-2 py-1 text-gray-800 transition hover:bg-gray-200 dark:bg-gray-850 dark:text-gray-200 dark:hover:bg-gray-800"
+					on:click={() => (previewAsleep = false)}
+				>
+					{LOAD_PREVIEW_LABEL}
+				</button>
 			</div>
 		{:else if error}
 			<div class="px-4 py-3 text-xs text-red-500 dark:text-red-400">{error}</div>

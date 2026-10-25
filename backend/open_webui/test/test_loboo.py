@@ -95,8 +95,8 @@ async def test_loboo_cloud_gives_loboo_cli_the_member_key_only_in_per_user_termi
     keyless = SimpleNamespace(id='no-key', name='n', email='e', role='user')
 
     # 每人一个容器的终端：Key 写进本人 home，loboo-cli 用它换会话；缓存期内同一个 Key 不重复写。
-    await hooks.on_terminal_tools(request, user, 'cloud', {'chat_id': 'c1'})
-    await hooks.on_terminal_tools(request, user, 'cloud', {'chat_id': 'c2'})
+    await cloud.provide_cli_key(request, user, 'cloud', {'chat_id': 'c1'})
+    await cloud.provide_cli_key(request, user, 'cloud', {'chat_id': 'c2'})
     assert writes == [
         (
             'http://orchestrator/p/loboo/files/write',
@@ -106,8 +106,8 @@ async def test_loboo_cloud_gives_loboo_cli_the_member_key_only_in_per_user_termi
         )
     ]
     # 可能多人共用的普通终端、没有 Key 的人：都不写。
-    await hooks.on_terminal_tools(request, user, 'shared', {})
-    await hooks.on_terminal_tools(request, keyless, 'cloud', {})
+    await cloud.provide_cli_key(request, user, 'shared', {})
+    await cloud.provide_cli_key(request, keyless, 'cloud', {})
     assert len(writes) == 1
 
 
@@ -452,6 +452,7 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
         await searching
     assert events['status'][-1] == {'action': 'web_search', 'description': '已停止搜索', 'done': True}
 
+
 def _terminal_skill_reader(monkeypatch):
     """read_skill_file against a fake terminal: one skill with a text and an image supporting file."""
     from open_webui.tools import builtin
@@ -510,6 +511,7 @@ async def test_terminal_skill_refuses_files_view_skill_does_not_list(monkeypatch
         result = await read(path)
         assert "'INSTALL.md'" in result['error'], path
     assert not any(request.startswith('/files/read') for request in requests)
+
 
 def _png(size: int) -> bytes:
     out = io.BytesIO()
@@ -627,3 +629,211 @@ async def test_loboo_profile_image_is_never_cached():
     await Users.update_user_by_id(user_id, {'profile_image_url': data_url})
     synced = await users.get_user_profile_image_by_id(user_id, user=None)
     assert default.headers['cache-control'] == synced.headers['cache-control'] == 'no-cache'
+
+
+@pytest.mark.asyncio
+async def test_loboo_cloud_state_asks_the_orchestrator_without_waking_anyone(monkeypatch):
+    from open_webui.models.config import Config
+
+    grants = {'access_grants': [{'principal_type': 'user', 'principal_id': '*', 'permission': 'read'}]}
+    connections = [
+        {
+            'id': 'cloud',
+            'url': 'http://orchestrator',
+            'key': 'k',
+            'server_type': 'orchestrator',
+            'policy_id': 'loboo',
+            'config': grants,
+        },
+        {'id': 'shared', 'url': 'http://open-terminal', 'key': 'k', 'config': grants},
+    ]
+
+    async def get(key, default=None):
+        return connections if key == 'terminal_server.connections' else default
+
+    monkeypatch.setattr(Config, 'get', staticmethod(get))
+    listed = []
+    answers = [
+        [
+            {
+                'user_id': 'u1',
+                'policy_id': 'loboo',
+                'context_id': 'default',
+                'status': 'running',
+                'idle_seconds': 30,
+                'idle_timeout_minutes': 15,
+            }
+        ],
+        None,
+    ]
+
+    async def fetch_instances(url, key):
+        listed.append((url, key))
+        return answers.pop(0)
+
+    monkeypatch.setattr(cloud, '_fetch_instances', fetch_instances)
+    monkeypatch.setattr(cloud, '_instances_cache', {})
+
+    def member(user_id):
+        return SimpleNamespace(id=user_id, role='user')
+
+    # 列表 10 秒内只取一次：在列表里且在跑的是 running，不在列表里的（已回收）是 sleeping。
+    assert await cloud.terminal_state(member('u1'), 'cloud') == {
+        'state': 'running',
+        'idle_seconds': 30,
+        'idle_timeout_minutes': 15,
+    }
+    assert (await cloud.terminal_state(member('u2'), 'cloud'))['state'] == 'sleeping'
+    assert listed == [('http://orchestrator', 'k')]
+    # 不是按人分容器的终端、编排服务答不上来：unknown，面板照常挂载。
+    assert (await cloud.terminal_state(member('u1'), 'shared'))['state'] == 'unknown'
+    monkeypatch.setattr(cloud, '_instances_cache', {})
+    assert (await cloud.terminal_state(member('u1'), 'cloud'))['state'] == 'unknown'
+
+
+def _cloud_and_shared_terminals(monkeypatch):
+    from open_webui.models.config import Config
+
+    connections = [
+        {'id': 'cloud', 'url': 'http://orchestrator', 'key': 'k', 'server_type': 'orchestrator', 'policy_id': 'loboo'},
+        {'id': 'shared', 'url': 'http://open-terminal', 'key': 'k'},
+    ]
+
+    async def get(key, default=None):
+        return connections if key == 'terminal_server.connections' else default
+
+    monkeypatch.setattr(Config, 'get', staticmethod(get))
+    monkeypatch.setattr(cloud, '_contexts', {})
+
+
+@pytest.mark.asyncio
+async def test_loboo_cloud_plain_messages_leave_the_terminal_asleep(monkeypatch):
+    from open_webui.utils import terminals
+
+    _cloud_and_shared_terminals(monkeypatch)
+    monkeypatch.setattr(cloud, '_skill_bodies', {})
+    asked = []
+
+    async def get_json(request, user, metadata, path, extra_params=None):
+        asked.append((metadata['terminal_id'], path))
+        if path.startswith('/skills/read'):
+            return {'name': 'loboo-cli', 'content': 'body', 'location': '/home/user/.agents/skills/loboo-cli/SKILL.md'}
+        return [{'id': 'terminal:loboo-cli', 'name': 'loboo-cli'}]
+
+    async def agents_md(request, user, metadata, extra_params=None):
+        asked.append((metadata['terminal_id'], 'AGENTS.md'))
+        return '# AGENTS.md\n\nhi'
+
+    monkeypatch.setattr(terminals, 'get_terminal_json', get_json)
+    monkeypatch.setattr(terminals, 'get_terminal_agents_md', agents_md)
+    user = SimpleNamespace(id='u1', role='user')
+
+    # 萝卜云：进程里还没有这个人的缓存时问一次容器，之后的消息都用缓存，不碰容器；
+    # 对话里 $ 点名过的技能正文也一样，第一次点名时取一次。
+    for _ in range(3):
+        message = {'terminal_id': 'cloud', 'chat_id': 'c1'}
+        assert (await hooks.terminal_skill(None, user, message, 'loboo-cli', {}))['content'] == 'body'
+        assert await hooks.terminal_skills(None, user, message, {}) == [
+            {'id': 'terminal:loboo-cli', 'name': 'loboo-cli'}
+        ]
+        assert await hooks.terminal_agents_md(None, user, message, {}) == '# AGENTS.md\n\nhi'
+    assert sorted(asked) == [('cloud', '/skills'), ('cloud', '/skills/read?name=loboo-cli'), ('cloud', 'AGENTS.md')]
+    # 点名了缓存里没有的技能（比如刚在面板里新建的）：当场重取一次。
+    asked.clear()
+    await hooks.terminal_skills(None, user, {'terminal_id': 'cloud', 'chat_id': 'c1'}, {}, ['terminal:brand-new'])
+    assert ('cloud', '/skills') in asked
+    # 其他终端照旧每条消息现取。
+    asked.clear()
+    for _ in range(2):
+        await hooks.terminal_skills(None, user, {'terminal_id': 'shared'}, {})
+    assert asked == [('shared', '/skills')] * 2
+
+
+@pytest.mark.asyncio
+async def test_loboo_cloud_wakes_the_terminal_on_the_first_tool_call(monkeypatch):
+    _cloud_and_shared_terminals(monkeypatch)
+    monkeypatch.setattr(config, 'ENABLED', True)
+    monkeypatch.setattr(cloud, '_REFRESH_DELAY_SECONDS', 0)
+    steps = []
+
+    async def terminal_state(user, terminal_id):
+        steps.append('state')
+        return {'state': 'sleeping', 'idle_seconds': None, 'idle_timeout_minutes': None}
+
+    async def provide_cli_key(request, user, terminal_id, metadata):
+        steps.append('key')
+
+    async def load_context(request, user, metadata, extra_params):
+        steps.append('refresh')
+        return cloud._Context([{'id': 'terminal:new-skill'}], None, loaded_at=0)
+
+    async def emit(event):
+        steps.append(('status', event['data'].get('description'), event['data'].get('hidden', False)))
+
+    async def run_command(**kwargs):
+        steps.append(('run', kwargs['command']))
+        return 'ok'
+
+    monkeypatch.setattr(cloud, 'terminal_state', terminal_state)
+    monkeypatch.setattr(cloud, 'provide_cli_key', provide_cli_key)
+    monkeypatch.setattr(cloud, '_load_context', load_context)
+    user = SimpleNamespace(id='u1', role='user')
+    tools = await hooks.on_terminal_tools(
+        None, user, 'cloud', {'chat_id': 'c1'}, {'run_command': {'callable': run_command, 'type': 'terminal'}}, emit
+    )
+    call = tools['run_command']['callable']
+    # 执行工具时 get_updated_tool_function 会按 __function__ 重新包一层；没有它，这层包装才不会被绕开。
+    assert not hasattr(call, '__function__')
+
+    # 这一轮第一次调用：查状态、冷的就提示启动中、写 Key、执行、收起提示；第二次直接执行。用完后在后台刷新缓存。
+    assert await call(command='ls') == 'ok'
+    assert await call(command='pwd') == 'ok'
+    await asyncio.sleep(0.05)
+    assert steps == [
+        'state',
+        ('status', cloud.STARTING, False),
+        'key',
+        ('run', 'ls'),
+        ('status', None, True),
+        ('run', 'pwd'),
+        'refresh',
+    ]
+    assert cloud._contexts[('u1', 'cloud', 'default')].skills == [{'id': 'terminal:new-skill'}]
+
+    # 其他终端的工具原样返回。
+    shared = {'run_command': {'callable': run_command}}
+    assert await hooks.on_terminal_tools(None, user, 'shared', {}, shared, emit) is shared
+
+
+@pytest.mark.asyncio
+async def test_terminal_specs_keep_the_orchestrator_a_reload_misses(monkeypatch):
+    from open_webui.models.config import Config
+    from open_webui.utils import tools
+
+    connections = [
+        {'id': 'cloud', 'url': 'http://orchestrator', 'key': 'k', 'server_type': 'orchestrator', 'policy_id': 'loboo'},
+        {'id': 'shared', 'url': 'http://open-terminal', 'key': 'k'},
+    ]
+
+    async def get(key, default=None):
+        return connections if key == 'terminal_server.connections' else default
+
+    async def specs(configs):
+        return [{'id': 'shared', 'url': 'http://open-terminal', 'specs': [{'name': 'run_command'}]}]
+
+    async def no_prompt(url, headers, cookies=None):
+        return None
+
+    monkeypatch.setattr(Config, 'get', staticmethod(get))
+    monkeypatch.setattr(tools, 'get_tool_servers_data', specs)
+    monkeypatch.setattr(tools, 'get_terminal_system_prompt', no_prompt)
+    cloud_last = {'id': 'cloud', 'url': 'http://orchestrator/p/loboo', 'specs': [], 'system_prompt': 'cloud prompt'}
+    shared_last = {'id': 'shared', 'url': 'http://open-terminal', 'specs': [], 'system_prompt': 'old shared prompt'}
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(TERMINAL_SERVERS=[cloud_last, shared_last], redis=None))
+    )
+
+    # 编排服务这次没连上、也没给提示词：保留上一次的那条；普通 Open Terminal 按新结果，旧提示词不留。
+    servers = {server['id']: server for server in await tools.set_terminal_servers(request)}
+    assert servers['cloud'] is cloud_last
+    assert 'system_prompt' not in servers['shared']

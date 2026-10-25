@@ -24,6 +24,7 @@
 	import Artifacts from './Artifacts.svelte';
 	import Embeds from './ChatControls/Embeds.svelte';
 	import FileNav from './FileNav.svelte';
+	import CloudGate from '$lib/components/loboo/CloudGate.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
 	import { isSavedChatId } from '$lib/utils/chatId';
@@ -298,7 +299,8 @@
 									}}
 								/>
 							{:else if activeTab === 'files' && terminalFilesAvailable && $selectedTerminalId}
-								<FileNav {chatId} />
+								<!-- loboo fork: 萝卜云's panel runs only while someone is there (CloudGate) -->
+								<CloudGate><FileNav {chatId} /></CloudGate>
 							{:else if activeTab === 'files' && codeInterpreterEnabled}
 								<PyodideFileNav />
 							{:else}
@@ -428,7 +430,8 @@
 									}}
 								/>
 							{:else if activeTab === 'files' && terminalFilesAvailable && $selectedTerminalId}
-								<FileNav overlay={dragged} {chatId} />
+								<!-- loboo fork: 萝卜云's panel runs only while someone is there (CloudGate) -->
+								<CloudGate><FileNav overlay={dragged} {chatId} /></CloudGate>
 							{:else if activeTab === 'files' && codeInterpreterEnabled}
 								<PyodideFileNav overlay={dragged} />
 							{:else}

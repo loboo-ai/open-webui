@@ -2875,8 +2875,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         from open_webui.utils.terminals import (
             format_terminal_skill_context,
             format_terminal_skill_manifest_entry,
-            get_terminal_json,
-            get_terminal_skill,
         )
 
         terminal_skill_prefix = 'terminal:'
@@ -2937,8 +2935,12 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     f'<description>{skill.description or ""}</description>\n</skill>\n'
                 )
 
+        # loboo fork: 萝卜云 answers from a per-member cache instead of waking the terminal (loboo/cloud.py).
+        from open_webui.loboo.hooks import terminal_skill as loboo_terminal_skill
+        from open_webui.loboo.hooks import terminal_skills as loboo_terminal_skills
+
         listed = (
-            await get_terminal_json(request, user, metadata, '/skills', extra_params)
+            await loboo_terminal_skills(request, user, metadata, extra_params, terminal_skill_ids)
             if terminal_id or terminal_skill_ids
             else None
         )
@@ -2955,7 +2957,10 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             sid = skill['id']
             if sid in mentioned_skill_ids or not use_builtin_tools or not model_builtin_tools.get('skills', True):
                 skill_name = unquote(sid.removeprefix(terminal_skill_prefix))
-                loaded = await get_terminal_skill(request, user.model_dump(), metadata, skill_name, extra_params)
+                # loboo fork: a skill mentioned with $ stays mentioned for the rest of the chat; 萝卜云 keeps
+                # its body in the per-member cache rather than waking the terminal on every later message
+                # (loboo/cloud.py).
+                loaded = await loboo_terminal_skill(request, user, metadata, skill_name, extra_params)
                 if loaded:
                     form_data['messages'] = add_or_update_system_message(
                         format_terminal_skill_context(
@@ -3139,6 +3144,13 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     terminal_tools = terminal_result
                     terminal_system_prompt = None
                 if terminal_tools:
+                    # loboo fork: 萝卜云 wakes the member's terminal and hands loboo-cli its key on the first tool
+                    # call of the turn, not on every message (loboo/cloud.py); it never fails the chat.
+                    from open_webui.loboo.hooks import on_terminal_tools
+
+                    terminal_tools = await on_terminal_tools(
+                        request, user, terminal_id, metadata, terminal_tools, event_emitter
+                    )
                     tools_dict = {**tools_dict, **terminal_tools}
                 if terminal_system_prompt:
                     form_data['messages'] = add_or_update_system_message(
@@ -3149,11 +3161,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             except Exception as e:
                 log.exception(e)
                 raise HTTPException(status_code=503, detail=f'Terminal unavailable: {e}') from e
-
-            # loboo fork: 萝卜云 hands loboo-cli the member's key; it never fails the chat.
-            from open_webui.loboo.hooks import on_terminal_tools
-
-            await on_terminal_tools(request, user, terminal_id, metadata)
 
         if direct_tool_servers:
             for tool_server in direct_tool_servers:
@@ -3179,9 +3186,11 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     }
 
         if terminal_id and terminal_capability:
-            from open_webui.utils.terminals import add_terminal_agents_md, get_terminal_agents_md
+            from open_webui.loboo.hooks import terminal_agents_md as loboo_terminal_agents_md
+            from open_webui.utils.terminals import add_terminal_agents_md
 
-            agents_md = await get_terminal_agents_md(request, user, metadata, extra_params)
+            # loboo fork: 萝卜云 reads AGENTS.md from the same per-member cache as its skills (loboo/cloud.py).
+            agents_md = await loboo_terminal_agents_md(request, user, metadata, extra_params)
             if agents_md:
                 form_data['messages'] = add_terminal_agents_md(form_data['messages'], agents_md)
 
