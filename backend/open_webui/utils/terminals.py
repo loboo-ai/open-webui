@@ -14,6 +14,7 @@ from open_webui.utils.skill_files import (
     bounded_skill_manifest,
     format_skill_content,
     skill_content_page,
+    validate_path,
 )
 
 TERMINAL_CONTEXT_HEADER = 'X-Terminal-Context-Id'
@@ -187,7 +188,7 @@ async def get_terminal_json(request, user, metadata: dict, path: str, extra_para
                 ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
                 allow_redirects=False,
             ) as response:
-                return await response.json() if response.status == 200 else None
+                return await _json_or_none(response)
 
     event_caller = (extra_params or {}).get('__event_call__')
     if event_caller:
@@ -199,6 +200,18 @@ async def get_terminal_json(request, user, metadata: dict, path: str, extra_para
         )
         return result.get('data') if isinstance(result, dict) else None
     return None
+
+
+async def _json_or_none(response):
+    """loboo fork: /files/read answers images with their raw bytes, and callers read JSON only."""
+    import aiohttp
+
+    if response.status != 200:
+        return None
+    try:
+        return await response.json()
+    except aiohttp.ContentTypeError:
+        return None
 
 
 async def get_terminal_agents_md(request, user, metadata: dict, extra_params: dict | None = None) -> str | None:
@@ -270,6 +283,53 @@ async def get_terminal_skill(
         'directory': directory,
         **bounded_skill_manifest(resources, 'resources'),
     }
+
+
+async def read_terminal_skill_file(
+    request,
+    user,
+    metadata: dict,
+    skill_name: str,
+    path: str,
+    extra_params: dict | None = None,
+    *,
+    offset: int = 0,
+    max_chars: int = SKILL_CONTENT_MAX_CHARS,
+) -> dict | None:
+    """Read a supporting file that view_skill listed, from the skill's directory in the terminal.
+
+    loboo fork: skills load through view_skill, so models read the files SKILL.md links to with read_skill_file,
+    the same way they read SKILL.md (the agentskills.io and Codex convention). Only listed files are readable here;
+    anything else in the terminal stays with the terminal tools.
+    """
+    skill = await get_terminal_skill(request, user, metadata, skill_name, extra_params, refresh=False)
+    if skill is None:
+        return None
+    resources = skill.get('resources') or []
+    try:
+        validate_path(path)
+        listed = path in resources
+    except ValueError:
+        listed = False
+    if not listed:
+        example = resources[0] if resources else 'INSTALL.md'
+        raise ValueError(
+            f'{path!r} is not a supporting file of this skill. Pass a path exactly as view_skill lists it, '
+            f'e.g. {example!r}; read other files with the terminal tools.'
+        )
+
+    location = posixpath.join(skill['directory'], path)
+    data = await get_terminal_json(
+        request, user, metadata, f'/files/read?path={quote(location, safe="")}', extra_params
+    )
+    content = data.get('content') if isinstance(data, dict) else None
+    if not isinstance(content, str):
+        return {
+            'path': path,
+            'location': location,
+            'notice': 'Not readable as text here; use terminal tools on location.',
+        }
+    return {'path': path, **skill_content_page(content, offset, max_chars)}
 
 
 def format_terminal_skill_context(skill: dict, skill_id: str, tools_enabled: bool) -> str:

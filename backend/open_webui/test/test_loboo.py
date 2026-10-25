@@ -450,3 +450,62 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await searching
     assert events['status'][-1] == {'action': 'web_search', 'description': '已停止搜索', 'done': True}
+
+def _terminal_skill_reader(monkeypatch):
+    """read_skill_file against a fake terminal: one skill with a text and an image supporting file."""
+    from open_webui.tools import builtin
+    from open_webui.utils import terminals
+
+    requests = []
+
+    async def fake_json(request, user, metadata, path, extra_params=None):
+        requests.append(path)
+        if path.startswith('/skills/read'):
+            return {
+                'name': 'loboo-cli',
+                'content': 'Check [INSTALL.md](INSTALL.md) first.',
+                'location': '/home/user/.agents/skills/loboo-cli/SKILL.md',
+                'resources': ['INSTALL.md', 'logo.png'],
+            }
+        if path.endswith('INSTALL.md'):
+            return {'content': 'install steps ' * 10}
+        return None  # images come back as raw bytes, which get_terminal_json reads as None
+
+    monkeypatch.setattr(terminals, 'get_terminal_json', fake_json)
+
+    async def read(path, **kwargs):
+        return json.loads(
+            await builtin.read_skill_file(
+                'terminal:loboo-cli',
+                path,
+                __request__=object(),
+                __user__={'id': 'u1'},
+                __metadata__={'terminal_id': 'cloud'},
+                **kwargs,
+            )
+        )
+
+    return read, requests
+
+
+@pytest.mark.asyncio
+async def test_terminal_skill_reads_the_supporting_files_view_skill_lists(monkeypatch):
+    read, requests = _terminal_skill_reader(monkeypatch)
+
+    page = await read('INSTALL.md', max_chars=20)
+    assert page == {'path': 'INSTALL.md', 'content': ('install steps ' * 10)[:20], 'next_offset': 20}
+    assert '/files/read?path=%2Fhome%2Fuser%2F.agents%2Fskills%2Floboo-cli%2FINSTALL.md' in requests
+
+    image = await read('logo.png')
+    assert 'error' not in image
+    assert image['location'] == '/home/user/.agents/skills/loboo-cli/logo.png' and image['notice']
+
+
+@pytest.mark.asyncio
+async def test_terminal_skill_refuses_files_view_skill_does_not_list(monkeypatch):
+    read, requests = _terminal_skill_reader(monkeypatch)
+
+    for path in ('missing.md', '../x', '/etc/passwd', 'references/../INSTALL.md'):
+        result = await read(path)
+        assert "'INSTALL.md'" in result['error'], path
+    assert not any(request.startswith('/files/read') for request in requests)

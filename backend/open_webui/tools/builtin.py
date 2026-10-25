@@ -3566,7 +3566,7 @@ async def read_skill_file(
     __metadata__: dict = None,
     __event_call__: callable = None,
 ) -> str:
-    """Read a skill file from the loaded snapshot. Terminal skills support SKILL.md only.
+    """Read SKILL.md or a supporting file listed by view_skill.
 
     :param id: Skill ID.
     :param path: Relative path within the skill.
@@ -3583,10 +3583,23 @@ async def read_skill_file(
         if not __user__ or __request__ is None:
             raise ValueError('Request and user context required')
         if id.startswith('terminal:'):
-            from open_webui.utils.terminals import get_terminal_skill
+            from open_webui.utils.terminals import get_terminal_skill, read_terminal_skill_file
 
             if path != 'SKILL.md':
-                raise ValueError('Terminal skills support SKILL.md only; use terminal tools for supporting files.')
+                # loboo fork: supporting files listed by view_skill are readable too (upstream allowed SKILL.md only).
+                file = await read_terminal_skill_file(
+                    __request__,
+                    __user__,
+                    __metadata__ if __metadata__ is not None else {},
+                    unquote(id.removeprefix('terminal:')),
+                    path,
+                    {'__event_call__': __event_call__},
+                    offset=offset,
+                    max_chars=max_chars,
+                )
+                if not file:
+                    raise ValueError(f"Skill '{id}' not found")
+                return JSONCodec.dumps(file, ensure_ascii=False)
             skill = await get_terminal_skill(
                 __request__,
                 __user__,
