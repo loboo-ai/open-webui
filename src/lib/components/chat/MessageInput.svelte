@@ -781,6 +781,9 @@
 			comparisonLoading = false;
 		}
 	};
+	// loboo fork: only admins get Compare text (the + menu entry and /compare); members' input stays simple.
+	let compareHandler: (() => Promise<void>) | null = null;
+	$: compareHandler = $_user?.role === 'admin' ? openComparison : null;
 
 	const applyComparisonToPrompt = (text: string) => {
 		if (
@@ -1538,7 +1541,7 @@
 					onStatus: statusHandler,
 					onFork: forkHandler,
 					onModel: () => modelSelector?.open(),
-					onCompare: openComparison,
+					onCompare: compareHandler,
 					onSettings: () => showSettings.set(true),
 					onTemporary: temporaryHandler,
 					onCreateSkill: createSkillHandler,
@@ -2336,7 +2339,7 @@
 							<div class=" flex justify-between mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
 								<div class="ml-1 self-end flex items-center">
 									<InputMenu
-										onCompare={openComparison}
+										onCompare={compareHandler}
 										bind:files
 										selectedModels={selectedModelIds}
 										fileUploadCapableModels={getFilesystemUploadTerminal(

@@ -44,7 +44,7 @@
 
 	export let onUpload: Function;
 	export let onClose: Function;
-	export let onCompare: () => void = () => {};
+	export let onCompare: (() => void) | null = null;
 	export let toolApprovalMode = 'full';
 	export let onToolApprovalModeChange: Function = () => {};
 
@@ -244,30 +244,32 @@
 						</button>
 					</Tooltip>
 
-					<button
-						type="button"
-						class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl text-left"
-						on:click={async () => {
-							show = false;
-							await tick();
-							onCompare();
-						}}
-					>
-						<svg
-							class="size-3.5 shrink-0"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="1.5"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
+					{#if onCompare}
+						<button
+							type="button"
+							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl text-left"
+							on:click={async () => {
+								show = false;
+								await tick();
+								onCompare?.();
+							}}
 						>
-							<rect x="3" y="4" width="18" height="16" rx="2" />
-							<path d="M12 4v16M5.5 12h4M14.5 12h4M16.5 10v4" />
-						</svg>
-						<span>{$i18n.t('Compare text')}</span>
-					</button>
+							<svg
+								class="size-3.5 shrink-0"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+							>
+								<rect x="3" y="4" width="18" height="16" rx="2" />
+								<path d="M12 4v16M5.5 12h4M14.5 12h4M16.5 10v4" />
+							</svg>
+							<span>{$i18n.t('Compare text')}</span>
+						</button>
+					{/if}
 
 					<Tooltip
 						content={!webUploadEnabled
