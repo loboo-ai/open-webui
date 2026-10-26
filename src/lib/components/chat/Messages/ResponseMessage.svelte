@@ -51,6 +51,7 @@
 	import ProfileImage from './ProfileImage.svelte';
 	import Image from '$lib/components/common/Image.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ReplyElapsed from '$lib/components/loboo/ReplyElapsed.svelte';
 	import RateComment from './RateComment.svelte';
 	import WebSearchResults from './ResponseMessage/WebSearchResults.svelte';
 	import Sparkles from '$lib/components/layout/Sidebar/icons/Sparkles.svelte';
@@ -912,11 +913,14 @@
 								/>
 							{/if}
 
-							{#if !message.done && !message.error && (hasResponseContent || !hasVisibleStatus)}
+							{#if !message.done && !message.error}
 								<div class="text-[0.9375rem] leading-relaxed">
-									<span
-										class="inline-block w-[0.125rem] h-3.5 bg-gray-400 dark:bg-gray-500 ml-0.5 animate-cursor-pulse align-text-bottom"
-									></span>
+									{#if hasResponseContent || !hasVisibleStatus}
+										<span
+											class="inline-block w-[0.125rem] h-3.5 bg-gray-400 dark:bg-gray-500 ml-0.5 animate-cursor-pulse align-text-bottom"
+										></span>
+									{/if}
+									<ReplyElapsed since={message.timestamp} />
 								</div>
 							{/if}
 
