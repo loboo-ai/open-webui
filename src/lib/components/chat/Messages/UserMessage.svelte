@@ -165,8 +165,9 @@
 	style="scroll-margin-top: 3rem;"
 >
 	{#if showAuthor}
+		<!-- self-start: the row stretches this wrapper, and the profile preview button inside centers the avatar -->
 		<div
-			class="shrink-0 {authorOnRight
+			class="shrink-0 self-start {authorOnRight
 				? 'ms-2 flex mt-0.5'
 				: `me-2 ${($settings?.chatBubble ?? true) ? 'mt-6' : 'hidden @lg:flex mt-0.5'}`}"
 		>
