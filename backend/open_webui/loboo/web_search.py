@@ -3,6 +3,7 @@
 对话模型只决定搜什么。搜索是对 LOBOO_SEARCH_MODEL 的一次 Responses 请求：带原生 web_search 工具、强制搜索、低推理强度，
 把搜到的事实整理成带来源链接的要点，作为工具结果回给对话模型。CPA 会在不支持原生搜索的渠道上去掉 web_search 工具，
 这时模型只能凭记忆作答，所以没有真正搜索过的答复一律不用：换一次渠道重试，仍然没有就如实报不可用。
+请求是流式的：搜索端每搜一次、打开一个网页都有事件，据此把进度显示在状态条上，也据此分辨渠道卡住和查得久。
 进度、搜过的网站和引用来源用上游现成的 status、source 事件显示在消息上方和下方，不依赖 /v1/alpha/search。
 """
 
@@ -13,6 +14,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -31,12 +33,19 @@ log = logging.getLogger(__name__)
 TIMEZONE = ZoneInfo('Asia/Shanghai')
 USER_LOCATION = {'type': 'approximate', 'country': 'CN', 'timezone': 'Asia/Shanghai'}
 WEEKDAYS = '一二三四五六日'
-# 一次搜索通常 6～26 秒（宽泛的问题会多搜几次、打开网页）。超时、连接断开、上游出错或渠道没有真正搜索时
-# 换一次渠道（超时多是某个渠道一时卡住，同一个问题再问通常 20 秒内就有结果），所以最多两次。
+# 普通问题一次搜索 6～26 秒；一次查一批新闻的要搜四五次、打开几个网页，再花半分钟写要点，1～2 分钟很正常，
+# 但事件之间最长也就几秒。所以按进度判断渠道卡住：开始有事件后 IDLE_TIMEOUT_SECONDS 内没有新事件就换一次渠道；
+# 连接断开、上游出错或渠道没有真正搜索时也换，最多两次。第一个事件之前 CPA 可能还在自己换凭据（Zeu 的 Cloudflare 504
+# 要等 60 秒才回），这段给 FIRST_EVENT_TIMEOUT_SECONDS，让它换完；提前断开在 CPA 看来是客户端取消，不会让坏渠道冷却。
+# 整次搜索（含重试）最多等 SEARCH_DEADLINE_SECONDS，一直有进展却超过它的，重试也只会再花一样久，
+# 直接请对话模型把问题拆小。
 ATTEMPTS = 2
-ATTEMPT_TIMEOUT_SECONDS = 45
+FIRST_EVENT_TIMEOUT_SECONDS = 90
+IDLE_TIMEOUT_SECONDS = 30
+SEARCH_DEADLINE_SECONDS = 180
 UNAVAILABLE = '联网搜索暂时不可用，请稍后再试。'
 THROTTLED = '联网搜索请求太频繁或额度已用完，请稍后再试。'
+TOO_LONG = f'联网搜索 {SEARCH_DEADLINE_SECONDS // 60} 分钟内没有查完，请把问题拆成几个小问题分别搜索。'
 # 用户的原话一并交给搜索：对话模型不知道今天的日期，转述时会把"明天"写成别的日期。贴了长文的只带开头。
 USER_WORDS_LIMIT = 2000
 
@@ -109,7 +118,9 @@ async def search_internet(
     # 状态条一旦显示「搜索中」，每条出路都要收尾：消息里存的最后一个状态没结束，这条消息就一直转圈。
     await _status(__event_emitter__, {'action': 'web_search_queries_generated', 'queries': [query], 'done': False})
     try:
-        findings = await search(UserModel(**__user__), query, user_words)
+        findings = await search(
+            UserModel(**__user__), query, user_words, progress=lambda data: _status(__event_emitter__, data)
+        )
     except asyncio.CancelledError:
         # 成员停止了生成，上游会取消这个任务。收尾只是尽力而为：发状态失败也不能把取消换成别的异常。
         with contextlib.suppress(Exception):
@@ -128,9 +139,10 @@ async def search_internet(
     return JSONCodec.dumps({'error': failure}, ensure_ascii=False)
 
 
-async def search(user: UserModel, query: str, user_words: str | None = None) -> Findings:
+async def search(user: UserModel, query: str, user_words: str | None = None, progress=None) -> Findings:
     """
     用本人的 Key 让 CPA 上的 GPT 搜索 query；user_words 是用户这一轮的原话，用来纠正转述里的时间和地点。
+    progress 是异步回调，收到要显示在状态条上的进度（上游 status 事件的 data）。
     拿不到真正搜索过的结果时抛 SearchFailed。
     """
     try:
@@ -149,29 +161,46 @@ async def search(user: UserModel, query: str, user_words: str | None = None) -> 
         'reasoning': {'effort': 'low'},
         'include': ['web_search_call.action.sources'],
         'store': False,
-        'stream': False,
+        'stream': True,
     }
+    deadline = asyncio.get_running_loop().time() + SEARCH_DEADLINE_SECONDS
     for attempt in range(1, ATTEMPTS + 1):
-        try:
-            # 每次尝试都是一个新会话：CPA 按请求开头把相同的请求粘在同一个渠道上（会话粘性），
-            # 不带自己的 prompt_cache_key，重试就会回到刚失败的渠道。
-            status, data = await _post(key, {**body, 'prompt_cache_key': uuid.uuid4().hex})
-        except TimeoutError:
-            outcome = f'timed out after {ATTEMPT_TIMEOUT_SECONDS}s'
-        except (aiohttp.ClientError, ValueError) as e:
-            outcome = type(e).__name__
-        else:
-            if status in (401, 403, 429):
-                log.warning(
-                    'loboo: web search for user %s refused by the CPA: HTTP %d %s', user.id, status, _error(data)
-                )
-                raise SearchFailed(THROTTLED if status == 429 else UNAVAILABLE)
-            findings = findings_from(data) if status == 200 else None
-            if findings:
-                return findings
-            outcome = 'no search performed' if status == 200 else f'HTTP {status} {_error(data)}'
+        if attempt > 1 and progress:
+            await progress({'action': 'web_search', 'description': '这次没有搜成，换个渠道重新搜索', 'done': False})
+        outcome = await _attempt(user, key, body, deadline, progress)
+        if isinstance(outcome, Findings):
+            return outcome
         log.warning('loboo: web search attempt %d/%d for user %s failed: %s', attempt, ATTEMPTS, user.id, outcome)
     raise SearchFailed(UNAVAILABLE)
+
+
+async def _attempt(user: UserModel, key: str, body: dict, deadline: float, progress) -> Findings | str:
+    """一次搜索请求：真正搜索过的结果，或值得换渠道再试的失败原因（记日志用）；不该再试时抛 SearchFailed。"""
+    try:
+        async with asyncio.timeout_at(deadline):
+            # 每次尝试都是一个新会话：CPA 按请求开头把相同的请求粘在同一个渠道上（会话粘性），
+            # 不带自己的 prompt_cache_key，重试就会回到刚失败的渠道。
+            data = await _stream(key, {**body, 'prompt_cache_key': uuid.uuid4().hex}, progress)
+    except _AttemptFailed as e:
+        if e.status in (401, 403, 429):
+            log.warning('loboo: web search for user %s refused by the CPA: %s', user.id, e)
+            raise SearchFailed(THROTTLED if e.status == 429 else UNAVAILABLE) from e
+        return str(e)
+    except TimeoutError:
+        # 没有进展的超时 _stream 已经换成了 _AttemptFailed，到这里的只有整次搜索的期限。
+        log.warning('loboo: web search for user %s not done in %ds', user.id, SEARCH_DEADLINE_SECONDS)
+        raise SearchFailed(TOO_LONG) from None
+    except (aiohttp.ClientError, ValueError) as e:
+        return type(e).__name__
+    return findings_from(data) or 'no search performed'
+
+
+class _AttemptFailed(Exception):
+    """这一次请求没拿到完整的搜索结果；status 是 CPA 回的 HTTP 状态码，流里出的错为 None。"""
+
+    def __init__(self, outcome: str, status: int | None = None):
+        super().__init__(outcome)
+        self.status = status
 
 
 def _error(data) -> str:
@@ -238,16 +267,68 @@ def _untracked(url: str) -> str:
     return f'{base}?{kept}{hash_mark}{fragment}' if kept else f'{base}{hash_mark}{fragment}'
 
 
-async def _post(key: str, body: dict) -> tuple[int, object]:
+async def _stream(key: str, body: dict, progress) -> dict:
+    """
+    发一次流式搜索请求，返回最终的 Responses 对象；搜索端的每一步换成状态交给 progress。
+    没有进展（第一个事件迟迟不来、两个事件之间隔太久）和其余失败都抛 _AttemptFailed。
+    """
     session = await get_session()
-    async with session.post(
-        f'{config.LOBOO_CPA_BASE_URL}/responses',
-        json=body,
-        headers={'Authorization': f'Bearer {key}'},
-        timeout=aiohttp.ClientTimeout(total=ATTEMPT_TIMEOUT_SECONDS),
-        ssl=AIOHTTP_CLIENT_SESSION_SSL,
-    ) as response:
-        return response.status, await response.json(content_type=None)
+    started = False
+    try:
+        async with asyncio.timeout(FIRST_EVENT_TIMEOUT_SECONDS) as idle:
+            async with session.post(
+                f'{config.LOBOO_CPA_BASE_URL}/responses',
+                json=body,
+                headers={'Authorization': f'Bearer {key}'},
+                # 时限只由这里的空闲计时和 search 的整次期限管，不用共享会话默认的总超时。
+                timeout=aiohttp.ClientTimeout(),
+                # 最后的 response.completed 一行带着全部输出和来源，大的查询有几十 KB；
+                # 按行读的上限是缓冲的两倍，默认只有 128 KB。
+                read_bufsize=2**20,
+                ssl=AIOHTTP_CLIENT_SESSION_SSL,
+            ) as response:
+                if response.status != 200:
+                    data = await response.json(content_type=None)
+                    raise _AttemptFailed(f'HTTP {response.status} {_error(data)}', response.status)
+                async for event in _data_events(response):
+                    started = True
+                    idle.reschedule(asyncio.get_running_loop().time() + IDLE_TIMEOUT_SECONDS)
+                    kind = event.get('type')
+                    if kind in ('response.completed', 'response.incomplete'):
+                        return event['response']
+                    if kind in ('response.failed', 'error'):
+                        raise _AttemptFailed(f'{kind} {_error(event.get("response") or event)}')
+                    if progress and (status := _progress(event)):
+                        await progress(status)
+    except TimeoutError:
+        if not idle.expired():
+            raise
+        waited = IDLE_TIMEOUT_SECONDS if started else FIRST_EVENT_TIMEOUT_SECONDS
+        raise _AttemptFailed(f'no {"new" if started else "first"} event in {waited}s') from None
+    raise _AttemptFailed('stream ended before completion')
+
+
+async def _data_events(response):
+    """流里的 data 事件。CPA 在没有输出时每 15 秒发一行 keep-alive 注释，那不是进度。"""
+    async for line in response.content:
+        if line.startswith(b'data:'):
+            yield JSONCodec.loads(line[5:])
+
+
+def _progress(event: dict) -> dict | None:
+    """搜索端完成的一步换成状态条上的一条状态：搜了什么、在读哪个网站、开始整理结果；其余事件为 None。"""
+    item = event.get('item') or {}
+    if event.get('type') == 'response.output_item.done' and item.get('type') == 'web_search_call':
+        action = item.get('action') or {}
+        if action.get('type') == 'search':
+            # 前端按搜索词给每一项做 key，重复的词要去掉。
+            queries = list(dict.fromkeys(q for q in action.get('queries') or [action.get('query')] if q))
+            return {'action': 'web_search_queries_generated', 'queries': queries, 'done': False} if queries else None
+        host = urlsplit(action.get('url') or '').hostname
+        return {'action': 'web_search', 'description': f'正在阅读 {host}', 'done': False} if host else None
+    if event.get('type') == 'response.output_item.added' and item.get('type') == 'message':
+        return {'action': 'web_search', 'description': '正在整理搜索结果', 'done': False}
+    return None
 
 
 def _now() -> str:

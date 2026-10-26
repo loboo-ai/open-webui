@@ -298,10 +298,34 @@ def test_model_logo_follows_the_vendor_the_connection_reports():
     assert model_logos.logo_url(registry, 'gone') == model_logos.UNKNOWN
 
 
+def _sse(event):
+    return f'data: {json.dumps(event, ensure_ascii=False)}\n'.encode()
+
+
+async def _stalled_stream():
+    """开了流以后只有 CPA 的 keep-alive 注释：渠道卡住了。"""
+    yield _sse({'type': 'response.created'})
+    while True:
+        await asyncio.sleep(0.01)
+        yield b': keep-alive\n'
+
+
+async def _endless_stream():
+    """一直在写、永远写不完：查得太久。"""
+    while True:
+        await asyncio.sleep(0.01)
+        yield _sse({'type': 'response.output_text.delta', 'delta': '…'})
+
+
 class FakeCpa:
-    """假的 CPA 会话：按顺序给出答复（状态码与 JSON、要抛出的异常，或一直不回的 HANG），记下发出的请求。"""
+    """
+    假的 CPA 会话：按顺序给出答复，记下发出的请求。答复是状态码与 JSON（200 时 JSON 是最终的 Responses 对象，
+    按流式事件给出）、要抛出的异常、一直不回响应头的 HANG，或 STALLED、ENDLESS 两种流。
+    """
 
     HANG = object()
+    STALLED = object()
+    ENDLESS = object()
 
     def __init__(self):
         self.replies, self.sent = [], []
@@ -313,12 +337,16 @@ class FakeCpa:
             return HangingResponse()
         if isinstance(reply, BaseException):
             raise reply
+        if reply is self.STALLED:
+            return FakeResponse(200, None, _stalled_stream())
+        if reply is self.ENDLESS:
+            return FakeResponse(200, None, _endless_stream())
         return FakeResponse(*reply)
 
 
 class FakeResponse:
-    def __init__(self, status, data):
-        self.status, self.data = status, data
+    def __init__(self, status, data, content=None):
+        self.status, self.data, self.content = status, data, content or self._events()
 
     async def __aenter__(self):
         return self
@@ -328,6 +356,13 @@ class FakeResponse:
 
     async def json(self, content_type=None):
         return self.data
+
+    async def _events(self):
+        yield b': keep-alive\n'
+        for index, item in enumerate(self.data['output']):
+            yield _sse({'type': 'response.output_item.added', 'output_index': index, 'item': item})
+            yield _sse({'type': 'response.output_item.done', 'output_index': index, 'item': item})
+        yield _sse({'type': 'response.completed', 'response': self.data})
 
 
 class HangingResponse:
@@ -359,6 +394,7 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
                 'status': 'completed',
                 'action': {
                     'type': 'search',
+                    'queries': ['上海 天气 今天', '上海 天气 今天'],
                     'sources': [
                         {'type': 'url', 'url': 'https://b.example/2'},
                         {'type': 'url', 'url': 'https://c.example/3'},
@@ -366,6 +402,11 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
                         {'type': 'api', 'name': 'oai-weather'},
                     ],
                 },
+            },
+            {
+                'type': 'web_search_call',
+                'status': 'completed',
+                'action': {'type': 'open_page', 'url': 'https://c.example/3'},
             },
             {
                 'type': 'message',
@@ -425,12 +466,22 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     assert all(keys) and keys[0] != keys[1]
     body = cpa.sent[0][2]
     assert (body['model'], body['tool_choice'], body['tools'][0]['type']) == ('gpt-search', 'required', 'web_search')
+    assert body['stream'] is True
     # 用户的原话一并带上：对话模型转述时可能把"明天"写错。
     assert body['input'][0]['content'][0]['text'] == '用户的原话：上海明天要带伞吗\n\n要查的：上海今天天气'
-    # 状态条先显示搜索词，再列出搜过的网站：引用的在前、带标题，去掉 utm_source 后同一网页只列一次，
+    # 状态条先显示要查的，再跟着搜索端一步步显示：换渠道重试、实际的搜索词（重复的去掉）、在读的网站、开始整理，
+    # 最后列出搜过的网站：引用的在前、带标题，去掉 utm_source 后同一网页只列一次，
     # 其余查询串原样保留（GBK 编码、没有值的参数）。引用的网页另作引用来源。
-    assert events['status'][0] == {'action': 'web_search_queries_generated', 'queries': ['上海今天天气'], 'done': False}
-    assert events['status'][1]['items'] == [
+    sorting = {'action': 'web_search', 'description': '正在整理搜索结果', 'done': False}
+    assert events['status'][:-1] == [
+        {'action': 'web_search_queries_generated', 'queries': ['上海今天天气'], 'done': False},
+        sorting,
+        {'action': 'web_search', 'description': '这次没有搜成，换个渠道重新搜索', 'done': False},
+        {'action': 'web_search_queries_generated', 'queries': ['上海 天气 今天'], 'done': False},
+        {'action': 'web_search', 'description': '正在阅读 c.example', 'done': False},
+        sorting,
+    ]
+    assert events['status'][-1]['items'] == [
         {'title': 'A 站', 'link': 'https://a.example/1'},
         {'title': '天气网', 'link': 'https://c.example/3'},
         {'title': 'Foo', 'link': 'https://wiki.example/wiki/Foo_(bar)'},
@@ -444,8 +495,13 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     await ask((200, searched), capabilities={'citations': False})
     assert events['status'][-1]['done'] is True and 'source' not in events
 
-    # 某个渠道一时卡住超时：换一次渠道。
-    assert (await ask(TimeoutError(), (200, searched))).endswith(f'\n\n{text}') and len(cpa.sent) == 2
+    # 渠道开了流却没有进展（只有 keep-alive）：空闲超时，换一次渠道。
+    # 一直有进展却超过整次期限：不再重试，请对话模型拆小。
+    monkeypatch.setattr(web_search, 'IDLE_TIMEOUT_SECONDS', 0.05)
+    monkeypatch.setattr(web_search, 'SEARCH_DEADLINE_SECONDS', 0.3)
+    assert (await ask(FakeCpa.STALLED, (200, searched))).endswith(f'\n\n{text}') and len(cpa.sent) == 2
+    assert json.loads(await ask(FakeCpa.ENDLESS)) == {'error': web_search.TOO_LONG}
+    assert len(cpa.sent) == 1
     # 两次都没有真正搜索：如实报不可用，不把凭记忆写的内容当结果。
     assert json.loads(await ask((200, from_memory), (502, {}))) == {'error': web_search.UNAVAILABLE}
     assert len(cpa.sent) == 2 and events['status'][-1]['error'] is True
