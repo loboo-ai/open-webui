@@ -43,7 +43,7 @@
 		removeAllDetails
 	} from '$lib/utils';
 	import { WEBUI_BASE_URL } from '$lib/constants';
-	import { ASSISTANT_AVATAR, ASSISTANT_NAME } from '$lib/loboo';
+	import { ASSISTANT_AVATAR, ASSISTANT_NAME, formatElapsed } from '$lib/loboo';
 	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
 	import equal from 'fast-deep-equal';
 
@@ -97,6 +97,7 @@
 			query?: string;
 		};
 		done: boolean;
+		completedAt?: number;
 		error?: boolean | { content: string };
 		sources?: string[];
 		code_executions?: {
@@ -968,6 +969,14 @@
 							? 'text-gray-600 dark:text-gray-500'
 							: 'text-gray-600/80 dark:text-gray-500/70'} mt-0.5 [&>*]:shrink-0"
 					>
+						<!-- loboo fork: how long the reply took (src/lib/loboo.ts); always shown, touch screens have no hover -->
+						{#if message.done && !message.error && message.completedAt && message.timestamp}
+							<span
+								class="me-1.5 text-xs text-gray-400 dark:text-gray-500 tabular-nums select-none"
+							>
+								用时 {formatElapsed(message.completedAt - message.timestamp)}
+							</span>
+						{/if}
 						{#if message.done || siblings.length > 1}
 							{#if message.done && onInsertToNote && visibleResponseContent}
 								<Tooltip content={$i18n.t('Insert into note')} placement="bottom">

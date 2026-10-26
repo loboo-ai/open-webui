@@ -37,6 +37,14 @@ export const chatCloudTerminal = (
 	);
 };
 
+// How long a reply took: counting while it is pending (components/loboo/ReplyElapsed.svelte), then 用时 beside its
+// buttons once done, up to the completedAt the server adds to the finishing event (backend socket/main.py). Both count
+// from the reply's timestamp.
+export const formatElapsed = (seconds: number) => {
+	const s = Math.max(0, Math.floor(seconds));
+	return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+};
+
 // Web search reports its progress and the sites it read in the status line above the reply (status events from
 // backend loboo/web_search.py), so its tool calls are not shown again as blocks inside the reply.
 export const STATUS_ONLY_TOOLS = new Set(['search_internet']);

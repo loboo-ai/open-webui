@@ -1417,6 +1417,11 @@ async def get_event_emitter(request_info, update_db=True):
         if internal and event_data.get('type') == 'notification':
             return
 
+        # loboo fork: a finished reply carries the time it finished, which the browser shows as 用时. It has to ride
+        # on this event: the browser later saves each message back whole, dropping fields only the server wrote.
+        if event_data.get('type') == 'chat:completion' and (event_data.get('data') or {}).get('done'):
+            event_data = {**event_data, 'data': {**event_data['data'], 'completedAt': int(time.time())}}
+
         room = f'user:{user_id}'
         if event_data.get('type') != 'chat:messages':
             await sio.emit(
@@ -1460,7 +1465,17 @@ async def get_event_emitter(request_info, update_db=True):
                     payload = {
                         key: value
                         for key, value in data.items()
-                        if key in {'done', 'error', 'usage', 'finish_reason', 'content', 'selected_model_id', 'sources'}
+                        if key
+                        in {
+                            'done',
+                            'error',
+                            'usage',
+                            'finish_reason',
+                            'content',
+                            'selected_model_id',
+                            'sources',
+                            'completedAt',
+                        }
                     }
                     if output is not None:
                         payload['output'] = output
@@ -1567,6 +1582,15 @@ async def get_event_emitter(request_info, update_db=True):
                         },
                         touch=False,
                     )
+
+            # loboo fork: also kept when nobody is watching (the mini program in the background).
+            elif event_type == 'chat:completion' and 'completedAt' in (event_data.get('data') or {}):
+                await Chats.upsert_message_to_chat_by_id_and_message_id(
+                    chat_id,
+                    message_id,
+                    {'completedAt': event_data['data']['completedAt']},
+                    touch=False,
+                )
 
     if 'user_id' in request_info and 'chat_id' in request_info and 'message_id' in request_info:
         return __event_emitter__

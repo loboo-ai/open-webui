@@ -3501,6 +3501,11 @@
 			message.usage = usage;
 		}
 
+		// loboo fork: when the reply finished, by the server's clock; kept with the message for its 用时.
+		if (data.completedAt) {
+			message.completedAt = data.completedAt;
+		}
+
 		history.messages[message.id] = message;
 		history = history;
 
