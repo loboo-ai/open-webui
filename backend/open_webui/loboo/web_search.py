@@ -4,6 +4,7 @@
 把搜到的事实整理成带来源链接的要点，作为工具结果回给对话模型。CPA 会在不支持原生搜索的渠道上去掉 web_search 工具，
 这时模型只能凭记忆作答，所以没有真正搜索过的答复一律不用：换一次渠道重试，仍然没有就如实报不可用。
 请求是流式的：搜索端每搜一次、打开一个网页都有事件，据此把进度显示在状态条上，也据此分辨渠道卡住和查得久。
+一次调用可以带几个互不相关的问题（如每类新闻一个），同时搜，没查到的单独写明，对话模型只需重问那几个。
 进度、搜过的网站和引用来源用上游现成的 status、source 事件显示在消息上方和下方，不依赖 /v1/alpha/search。
 """
 
@@ -46,16 +47,21 @@ SEARCH_DEADLINE_SECONDS = 180
 UNAVAILABLE = '联网搜索暂时不可用，请稍后再试。'
 THROTTLED = '联网搜索请求太频繁或额度已用完，请稍后再试。'
 TOO_LONG = f'联网搜索 {SEARCH_DEADLINE_SECONDS // 60} 分钟内没有查完，请把问题拆成几个小问题分别搜索。'
+# 一次调用里同时搜的问题最多这么多个，工具说明里的 "at most 5" 跟它一致。再多会顶到上游的并发限制
+# （Zeu 晚高峰对排队太多的请求回 429）。
+MAX_QUERIES = 5
 # 用户的原话一并交给搜索：对话模型不知道今天的日期，转述时会把"明天"写成别的日期。贴了长文的只带开头。
 USER_WORDS_LIMIT = 2000
 
 INSTRUCTIONS = (
     '现在是{now}，用户在中国。你在替另一个 AI 助手联网查资料：'
     '先用 web_search 搜索（通常一两次就够），需要核对时再打开网页；'
-    '再把与问题直接相关的事实整理成不超过 6 条要点，每条一两句，写明信息的日期，'
+    '再把与问题直接相关的事实整理成要点：要求了条数就照给（最多 15 条），没说条数时不超过 6 条；'
+    '每条一两句，写明信息的日期，'
     '后面用 Markdown 链接标注来源网页，链接文字写网页标题。'
     '来源说法不一时，以发布时间最新的官方来源为准，并点明分歧。'
-    '要查的内容是那个助手转述的，可能写错日期，时间和地点以用户的原话为准。'
+    '要查的内容是那个助手转述的，可能写错日期，时间和地点以用户的原话为准；'
+    '用户的原话里可能还有别的问题，只查「要查的」这一项。'
     '只依据这次搜到的内容，查不到就直说，不要编造；用提问的语言回答，不寒暄，不给建议。'
 )
 # 链接地址里可以有一层成对的括号，如维基百科的 /wiki/Foo_(bar)。
@@ -84,7 +90,7 @@ def tools() -> list:
 # 也不与上游的 search_web 同名，前端按名字只把这个工具的调用收进状态条。
 # docstring 是工具说明，和上游内置工具一样用英文写。
 async def search_internet(
-    query: str,
+    queries: list[str],
     __request__: Request = None,
     __user__: dict = None,
     __event_emitter__: callable = None,
@@ -98,45 +104,90 @@ async def search_internet(
     or read a specific page. Skip it for tasks that need no outside information, such as translation, rewriting
     or math.
 
-    One call is usually enough: it searches several sources and opens pages by itself, and it knows the current
-    date and time in China. Put the whole question in one call instead of splitting it into several searches,
-    and don't search again to double-check the findings; call again only for something they did not cover.
+    Each question in `queries` is searched on its own and all of them run at the same time, so put one question
+    per independent topic in a single call (for example one per news category, city or product), at most 5; a
+    simple question needs just one. Each search covers several sources, opens pages by itself and knows the
+    current date and time in China. Don't search again to double-check the findings; call again only for what
+    they did not cover, such as a question reported as not found.
 
-    :param query: What to find out, as a self-contained question in the user's language, with the place or URL
-        it depends on. Keep time words such as "today" or "tomorrow" as the user wrote them; don't add dates.
-    :return: Dated findings with Markdown links to their sources; cite the sources you use as Markdown links
+    :param queries: The questions to find out, each self-contained in the user's language, with the place, time
+        window or URL it depends on. Keep time words such as "today" or "tomorrow" as the user wrote them; don't
+        add dates.
+    :return: Dated findings with Markdown links to their sources, one section per question when there are
+        several; cite the sources you use as Markdown links
     """
-    if not query.strip():
-        return JSONCodec.dumps({'error': 'query is empty'})
+    # 参数是对话模型给的，上游只按名字过滤、不校验类型，偶尔会把单个问题直接写成字符串。
+    if isinstance(queries, str):
+        queries = [queries]
+    # 前端按问题给状态条上的每一项做 key，重复的要去掉。
+    queries = list(dict.fromkeys(q.strip() for q in queries or [] if isinstance(q, str) and q.strip()))
+    if not queries:
+        return JSONCodec.dumps({'error': 'queries is empty'})
+    queries, skipped = queries[:MAX_QUERIES], queries[MAX_QUERIES:]
     metadata = __metadata__ or {}
     # 用户这一轮的原话，取前端发来的那条用户消息：发给模型的最后一条用户消息里，上游会在前面加附件标签
     # （<attached_files>，带图片时它是第一段文字，base_user_prompt 取到的就只有它），带知识库时还拼了检索内容。
     # 只有直接调 API、没有这条消息时才退回最后一条用户消息。
     user_message = metadata.get('user_message')
     user_words = user_message.get('content') if user_message else get_last_user_message(__messages__ or [])
+    user = UserModel(**__user__)
+    # 只有一个问题时跟着搜索端一步步显示；几个问题同时搜时每步都显示太乱（每条状态还要写一次聊天记录），
+    # 只报查完了几个。
+    progress = (lambda data: _status(__event_emitter__, data)) if len(queries) == 1 else None
+    finished = 0
+
+    async def look_up(query: str) -> Findings | str:
+        nonlocal finished
+        outcome = await _look_up(user, query, user_words, progress)
+        if len(queries) > 1:
+            finished += 1
+            description = f'已查完 {finished}/{len(queries)} 个问题'
+            await _status(__event_emitter__, {'action': 'web_search', 'description': description, 'done': False})
+        return outcome
 
     # 状态条一旦显示「搜索中」，每条出路都要收尾：消息里存的最后一个状态没结束，这条消息就一直转圈。
-    await _status(__event_emitter__, {'action': 'web_search_queries_generated', 'queries': [query], 'done': False})
+    await _status(__event_emitter__, {'action': 'web_search_queries_generated', 'queries': queries, 'done': False})
     try:
-        findings = await search(
-            UserModel(**__user__), query, user_words, progress=lambda data: _status(__event_emitter__, data)
-        )
+        outcomes = await asyncio.gather(*(look_up(query) for query in queries))
     except asyncio.CancelledError:
         # 成员停止了生成，上游会取消这个任务。收尾只是尽力而为：发状态失败也不能把取消换成别的异常。
         with contextlib.suppress(Exception):
             await _status(__event_emitter__, {'action': 'web_search', 'description': '已停止搜索', 'done': True})
         raise
+    found = [outcome for outcome in outcomes if isinstance(outcome, Findings)]
+    if not found:
+        reasons = set(outcomes)
+        failure = reasons.pop() if len(reasons) == 1 else UNAVAILABLE
+        await _status(__event_emitter__, {'action': 'web_search', 'description': failure, 'done': True, 'error': True})
+        return JSONCodec.dumps({'error': failure}, ensure_ascii=False)
+    await _report(__event_emitter__, found, cite=_citations_enabled(metadata))
+    return _result_text(queries, outcomes, skipped)
+
+
+async def _look_up(user: UserModel, query: str, user_words: str | None, progress) -> Findings | str:
+    """一个问题：搜到的结果，或给对话模型看的没查到的原因。"""
+    try:
+        return await search(user, query, user_words, progress)
     except SearchFailed as e:
-        failure = str(e)
+        return str(e)
     except Exception:
         log.exception('loboo: web search failed')
-        failure = UNAVAILABLE
-    else:
-        await _report(__event_emitter__, findings, cite=_citations_enabled(metadata))
-        # 搜索时间对对话模型是有用的事实；它对"今天"的认知来自默认系统提示里的日期（deploy/loboo-webui/README.md）。
-        return f'联网搜索结果（搜索时间：{_now()}）\n\n{findings.text}'
-    await _status(__event_emitter__, {'action': 'web_search', 'description': failure, 'done': True, 'error': True})
-    return JSONCodec.dumps({'error': failure}, ensure_ascii=False)
+        return UNAVAILABLE
+
+
+def _result_text(queries: list[str], outcomes: list[Findings | str], skipped: list[str]) -> str:
+    """给对话模型的结果：一个问题时就是要点；几个问题时每个问题一节，没查到的写明原因，它只需重问那几个。"""
+    # 搜索时间对对话模型是有用的事实；它对"今天"的认知来自默认系统提示里的日期（deploy/loboo-webui/README.md）。
+    head = f'联网搜索结果（搜索时间：{_now()}）'
+    if len(queries) == 1:
+        return f'{head}\n\n{outcomes[0].text}'
+    sections = [
+        f'### {query}\n{outcome.text if isinstance(outcome, Findings) else f"没有查到：{outcome}"}'
+        for query, outcome in zip(queries, outcomes)
+    ]
+    if skipped:
+        sections.append(f'下面的问题超过一次最多 {MAX_QUERIES} 个，没有查，需要时再调用一次：' + '；'.join(skipped))
+    return '\n\n'.join([head, *sections])
 
 
 async def search(user: UserModel, query: str, user_words: str | None = None, progress=None) -> Findings:
@@ -349,11 +400,14 @@ def _citations_enabled(metadata: dict) -> bool:
     return (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get('citations', True)
 
 
-async def _report(emitter, findings: Findings, *, cite: bool) -> None:
-    """把状态条收尾为搜过的网站（引用的在前）；cite 时引用的网页另作引用来源。"""
-    sites = [{'title': title, 'link': url} for url, title, _ in findings.cited] + [
-        {'link': url} for url in findings.consulted
-    ]
+async def _report(emitter, findings: list[Findings], *, cite: bool) -> None:
+    """把状态条收尾为这次各个问题搜过的网站（引用的在前，同一网页只列一次）；cite 时引用的网页另作引用来源。"""
+    cited: dict[str, tuple[str, str]] = {}
+    for found in findings:
+        for url, title, line in found.cited:
+            cited.setdefault(url, (title, line))
+    consulted = [url for url in dict.fromkeys(url for found in findings for url in found.consulted) if url not in cited]
+    sites = [{'title': title, 'link': url} for url, (title, _) in cited.items()] + [{'link': url} for url in consulted]
     if sites:
         # 上游的状态条把这句翻成「已搜索 N 个网站」，并列出这些网站。
         searched = {'description': 'Searched {{count}} sites', 'urls': [site['link'] for site in sites], 'items': sites}
@@ -363,7 +417,7 @@ async def _report(emitter, findings: Findings, *, cite: bool) -> None:
     await _status(emitter, {'action': 'web_search', 'done': True, **searched})
     if not (emitter and cite):
         return
-    for url, title, line in findings.cited:
+    for url, (title, line) in cited.items():
         await emitter(
             {
                 'type': 'source',

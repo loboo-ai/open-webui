@@ -436,7 +436,7 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
         ('last_active_at', 'updated_at', 'created_at'), 0
     )
 
-    async def ask(*answers, capabilities=None):
+    async def ask(*answers, capabilities=None, queries=['上海今天天气']):
         cpa.replies, cpa.sent = list(answers), []
         events.clear()
         # 带了图片时上游在最后一条用户消息前面加附件标签，作为第一段文字；原话是前端发来的那条用户消息。
@@ -454,7 +454,7 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
             'model': {'info': {'meta': {'capabilities': capabilities}}},
         }
         return await web_search.search_internet(
-            '上海今天天气', __user__=member, __event_emitter__=emit, __metadata__=metadata, __messages__=messages
+            queries, __user__=member, __event_emitter__=emit, __metadata__=metadata, __messages__=messages
         )
 
     # 渠道没有真正搜索（工具被去掉、凭记忆作答）时不用它的话，换一次渠道；用本人的 Key 发给 CPA 上的 GPT 强制搜索。
@@ -494,6 +494,22 @@ async def test_loboo_web_search_answers_only_with_real_searches(monkeypatch):
     # 模型关掉了引用能力时只列网站，不发引用来源。
     await ask((200, searched), capabilities={'citations': False})
     assert events['status'][-1]['done'] is True and 'source' not in events
+
+    # 几个问题同时搜：结果每个问题一节，没查到的写明原因（额度用完不重试），对话模型只需重问那个；
+    # 状态条只报查完了几个，最后合并列出搜过的网站。
+    result = await ask((200, searched), (429, {'error': 'rate limited'}), queries=['上海今天天气', '北京今天天气'])
+    assert result.index('### 上海今天天气') < result.index('### 北京今天天气') and len(cpa.sent) == 2
+    assert result.count(text) == 1 and result.count(f'没有查到：{web_search.THROTTLED}') == 1
+    milestones = [status.get('description') for status in events['status'][1:-1]]
+    assert milestones == ['已查完 1/2 个问题', '已查完 2/2 个问题']
+    assert events['status'][0]['queries'] == ['上海今天天气', '北京今天天气'] and events['status'][-1]['done'] is True
+    # 重复的问题只查一次，一次最多查 5 个，多的点名没查。
+    cities = [f'城市{i}今天天气' for i in range(6)]
+    result = await ask(*[(200, searched)] * 5, queries=[*cities, cities[0]])
+    assert len(cpa.sent) == 5 and result.endswith(f'没有查，需要时再调用一次：{cities[5]}')
+    # 对话模型偶尔把单个问题写成字符串而不是数组：当作一个问题，不按字拆开。
+    await ask((200, searched), queries='上海今天天气')
+    assert len(cpa.sent) == 1 and events['status'][0]['queries'] == ['上海今天天气']
 
     # 渠道开了流却没有进展（只有 keep-alive）：空闲超时，换一次渠道。
     # 一直有进展却超过整次期限：不再重试，请对话模型拆小。
