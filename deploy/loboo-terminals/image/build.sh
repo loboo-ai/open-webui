@@ -2,7 +2,7 @@
 # 构建萝卜云终端镜像。loboo-cli 的技能取自 loboo-mono 的检出（与桌面端安装的是同一份），
 # 默认 /opt/gits/loboo-mono，可用 LOBOO_MONO 指定；构建时还要能访问 service.loboo-ai.com 下载 CLI。
 # 镜像只在生产机上构建。在开发机（Mac）上试构建要设 LOBOO_MONO=/opt/gits/github/loboo-mono，而且构建出来是 arm64，不能给生产用。
-#   用法：build.sh loboo/open-terminal:0.14.4-r3
+#   用法：build.sh loboo/open-terminal:0.17.7-r4
 set -euo pipefail
 cd "$(dirname "$0")"
 tag="${1:?用法: build.sh <镜像标签，例如 loboo/open-terminal:0.14.4-r2>}"

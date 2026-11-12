@@ -38,6 +38,8 @@ update() {
   cd "$APP"
   local before after changed
   before=$(git rev-parse HEAD)
+  # 构建时的 pyodide:fetch 会改写这个受版本控制的文件；不还原的话，上游一改它，快进就失败。下一次构建会重新生成。
+  git checkout -q -- static/pyodide/pyodide-lock.json
   git fetch -q origin main
   git merge --ff-only -q origin/main
   after=$(git rev-parse HEAD)

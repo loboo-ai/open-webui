@@ -1,15 +1,12 @@
-# 萝卜云终端镜像：官方 open-terminal，加中文字体、loboo-cli 和它的技能。
+# 萝卜云终端镜像：官方 open-terminal，加 loboo-cli 和它的技能、搜索工具，/bin/sh 改指 bash。
 #   r1：fonts-noto-cjk（Word/PowerPoint 预览在容器里转 PDF，缺字体时中文成方块）
 #   r2：loboo-cli 种子 + 技能，容器启动时由 loboo-entrypoint.sh 放进用户 home
 #   r3：rg/fd；/bin/sh 改指 bash；loboo-cli 进 PATH；CLI 由环境托管（每次启动在后台更新）；成员进程 oom_score_adj=500
-# 构建用同目录的 build.sh（它先从 loboo-mono 检出拷技能）：./build.sh loboo/open-terminal:0.14.4-r3
+#   r4：官方 0.17.7。中文字体官方已带，去掉 r1 那层；浏览器、桌面（含声音）由 policy-loboo.json 的 env 关掉
+# 构建用同目录的 build.sh（它先从 loboo-mono 检出拷技能）：./build.sh loboo/open-terminal:0.17.7-r4
 # 升级官方镜像时改 FROM，打新标签，再改 docker-compose.yml 与 policy-loboo.json 里的镜像名。
-FROM ghcr.io/open-webui/open-terminal:0.14.4
+FROM ghcr.io/open-webui/open-terminal:0.17.7
 USER root
-RUN apt-get update -qq \
- && apt-get install -y --no-install-recommends fonts-noto-cjk \
- && rm -rf /var/lib/apt/lists/* \
- && fc-cache -f
 # r3：搜索工具。Codex 等模型习惯先用 rg；open-terminal 的 match_files 有 rg 才不跳过大于 1 MiB 的文件
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends ripgrep fd-find \

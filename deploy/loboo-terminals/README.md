@@ -26,11 +26,15 @@
 | `/opt/loboo-terminals/data/terminals.db` | 编排服务的 SQLite：策略、审计 |
 | `/usr/local/sbin/loboo-terminals-fw.sh` | 宿主机防护脚本（本目录 `loboo-terminals-fw.sh`） |
 | `/etc/systemd/system/loboo-terminals-fw.service` | 开机和 Docker 重启后重新挂防护链 |
-| 镜像 `loboo/open-terminal:0.14.4-r3` | `image/build.sh` 在本机构建，不推仓库；上一版 r2 留着回滚 |
+| 镜像 `loboo/open-terminal:0.17.7-r4` | `image/build.sh` 在本机构建，不推仓库；上一版 `0.14.4-r3` 留着回滚 |
 
 `/opt/loboo-terminals` 本身权限 700。本目录（仓库 `deploy/loboo-terminals/`）是这些文件的来源，改动先在这里提交，再复制到宿主机。
 
-版本：Terminals `ghcr.io/open-webui/terminals:0.2.5`，socket-proxy `tecnativa/docker-socket-proxy:v0.4.1`，终端镜像基于 `ghcr.io/open-webui/open-terminal:0.14.4`（0.14.2 开出站白名单时起不来，修在 0.14.3）。
+版本：Terminals `ghcr.io/open-webui/terminals:0.3.3`，socket-proxy `tecnativa/docker-socket-proxy:v0.4.1`，终端镜像基于 `ghcr.io/open-webui/open-terminal:0.17.7`（官方完整版）。
+
+- Terminals 先停在 0.3.3：0.4.x 把策略换成模板、去掉了 fork 依赖的 `/p/{policy}`，要手动迁移，还要求 Open WebUI ≥ 0.13.4。
+- 0.17.7 的完整版自带 Chromium、Linux 桌面和声音组件，萝卜云用不到，在 `policy-loboo.json` 的 env 里关掉（`OPEN_TERMINAL_ENABLE_BROWSER`、`OPEN_TERMINAL_ENABLE_DESKTOP` 设为 false）。关掉以后对应的接口和给模型的工具都不注册，模型看到的工具与 0.14.4 时一样。
+- 以后要开其中哪项，先改策略，再改 fork：`ChatTabs.svelte` 的 `checkTerminal` 对萝卜云写死了"有 Shell、没有桌面和浏览器"。1 CPU、1 GiB 跑不动桌面。
 
 ## 在 LoboOS 里怎么接
 
@@ -80,14 +84,14 @@
 
 ## 镜像与 loboo-cli
 
-`image/` 下是终端镜像：官方 open-terminal，加上 `fonts-noto-cjk`（Word/PowerPoint 预览在容器里转 PDF，缺字体时中文成方块）、搜索工具、loboo-cli 的种子和技能，并把 `/bin/sh` 改指 bash。
+`image/` 下是终端镜像：官方 open-terminal，加上搜索工具、loboo-cli 的种子和技能，并把 `/bin/sh` 改指 bash。中文字体（Word/PowerPoint 预览在容器里转 PDF 要用）从 0.17 起官方镜像自带。
 
-- 构建：`image/build.sh loboo/open-terminal:0.14.4-r3`。它从 loboo-mono 检出（默认 `/opt/gits/loboo-mono`，`LOBOO_MONO` 可改）拷 `skills/loboo-cli`，和桌面端装的是同一份；构建时要能访问 `service.loboo-ai.com` 下载 CLI。镜像只在生产机上构建，开发机（Mac）构建出来是 arm64。
+- 构建：`image/build.sh loboo/open-terminal:0.17.7-r4`。它从 loboo-mono 检出（默认 `/opt/gits/loboo-mono`，`LOBOO_MONO` 可改）拷 `skills/loboo-cli`，和桌面端装的是同一份；构建时要能访问 `service.loboo-ai.com` 下载 CLI。镜像只在生产机上构建，开发机（Mac）构建出来是 arm64。
 - 搜索工具：`ripgrep` 和 `fd-find`（`fd` 链到 `fdfind`）。Codex 等模型习惯先用 rg；open-terminal 的 `match_files` 有 rg 才不跳过大于 1 MiB 的文件。
 - `/bin/sh` 是 bash：open-terminal 的 `run_command` 走 `/bin/sh`，模型写的却是 bash。dash 会把 `cmd &> f` 静默拆成"后台运行 cmd、清空 f"，不报错。trixie 上用 debconf 选 sh 已经不起作用，所以按 `dash.preinst` 的说明用 `dpkg-divert` 改：dpkg 记着这处改动，dash 升级或重装也不会改回去。以 `sh` 的名字启动时 bash 处于 POSIX 模式，和平常的 bash 有两处不同：`source` 不带斜杠的文件名会失败；`source` 失败会让整条命令中止。
 - `PATH` 最前面是 `/home/user/.loboo/bin`，模型直接写 `loboo-cli` 也能找到。生产上唯一一次非 0 退出，就是模型跑 `command -v loboo-cli` 找不到命令。
 - 容器每次启动时，`loboo-entrypoint.sh` 把技能放进 `~/.agents/skills/loboo-cli`（整个目录随镜像替换）。CLI 没有时先放种子到 `~/.loboo/bin/loboo-cli`（技能写死了这个路径）；然后每次启动都在后台跑一遍线上的 `setup.sh`（60 秒超时；比对校验和，相同就不下载），不拖慢启动，输出在 `~/.loboo/update.log`。Open Terminal 会把 `~/.agents/skills` 下的技能列给 loboo-webui，模型看得到，需要时再加载。
-- **CLI 托管要和策略一起看**：策略 INFO 里那句"跳过技能的版本检查"，依赖的就是 r3 入口脚本的后台更新。回滚到 r2 时，INFO 要在同一次 PUT 里恢复原文，否则 CLI 不再更新，模型也不会去更新。
+- **CLI 托管要和策略一起看**：策略 INFO 里那句"跳过技能的版本检查"，依赖的是 r3 起入口脚本的后台更新（r4 沿用同一份入口脚本，在 r3、r4 之间回滚不受影响）。要是回滚到更早的镜像，INFO 要在同一次 PUT 里恢复原文，否则 CLI 不再更新，模型也不会去更新。
 - 成员进程的 `oom_score_adj` 是 500：入口脚本最先把自己调成 500，open-terminal 和模型跑的命令都继承它。整机内存耗尽时内核先杀成员进程，保住宿主上的服务（不调的话，按分数最先被杀的是 gpt.loboo-ai.com、CPA、loboo-webui）。这不是隔离手段，进程自己可以改回去；单个容器仍由策略的 1 GiB 上限管着。
 
 **授权**（fork 代码 `backend/open_webui/loboo/cloud.py`，从 `utils/middleware.py` 经 `loboo/hooks.py` 的 `on_terminal_tools` 调用）：
@@ -117,7 +121,7 @@ du -sh data/terminals/*                   # 每个人的 home 大小
 ```
 
 - **编排服务一停，所有开着萝卜云的对话都会报错**（"Terminal unavailable" / "Cannot connect to host 127.0.0.1:18210"），成员点右上角的云图标关掉就能继续。重启、换镜像都挑人少的时候，几秒到十几秒。重建编排服务不影响在跑的成员容器：2026-10-25 07:27 实测，2 个在跑的成员容器被正常接管。
-- 日志：编排服务和 socket-proxy 用 `local` 驱动轮转（compose 里的 `x-logging`，50m × 10，每个服务最多约 95 MB）。Terminals 0.2.5 每转发一个请求都会多打一条约 41 KB 的 `AttributeError` 堆栈（`BackgroundTasks` 用法与镜像里的 FastAPI 不兼容，请求本身成功），看拉起和回收时用 `docker compose logs --since 1h terminals | grep -E 'Provision|Reap'`。成员容器的日志随容器删除。
+- 日志：编排服务和 socket-proxy 用 `local` 驱动轮转（compose 里的 `x-logging`，50m × 10，每个服务最多约 95 MB）。0.2.5 每转发一个请求都多打一条约 41 KB 的 `AttributeError` 堆栈，变更日志说 0.2.7 修了。看拉起和回收时用 `docker compose logs --since 1h terminals | grep -E 'Provision|Reap'`。成员容器的日志随容器删除。
 - 容器在真用到终端时才拉起：模型调用终端工具（回复上方提示「萝卜云启动中」）、在文件面板里点唤醒或从文件卡片打开、输入 `/` 选终端技能。普通消息不碰容器：每条消息要的技能列表和 AGENTS.md 用 loboo-webui 按人缓存的那份（对话里用 `$` 点名过的技能正文也是），容器被用过之后在后台刷新（在面板或 Shell 里直接改技能目录、AGENTS.md，要等下一次调用终端工具后才进系统提示；兜底是缓存满 6 小时、容器又醒着时顺手刷新；用 `$` 点名缓存里没有的技能时当场重取）。文件面板 10 分钟没操作就暂停刷新，容器休眠时显示卡片、点了才唤醒。冷启动 3.5–4.8 秒，热请求约 20 毫秒，空闲容器约 69 MiB，宿主侧另有约 16 MiB。空闲 15 分钟停掉并删除容器，home 保留。
 - 改策略：编辑 `policy-loboo.json`，然后按顺序生效：
   1. PUT 整份 `policy-loboo.json`，**必须带全部字段**：漏了 `memory_limit`，容器就不限内存（Terminals `docker.py:110-113`）。
@@ -170,7 +174,7 @@ du -sh data/terminals/*                   # 每个人的 home 大小
 4. 装防护：复制 `loboo-terminals-fw.sh` 到 `/usr/local/sbin/`（755），`loboo-terminals-fw.service` 到 `/etc/systemd/system/`，`systemctl daemon-reload && systemctl enable --now loboo-terminals-fw.service`。脚本默认取出口网卡上的公网 IP。如果新机器在 VPC 里、网卡上只有内网地址，就在服务里加 `Environment=LOBOO_TERM_PUBLIC_IPS=<公网 IP>`，或者确认 `service.loboo-ai.com` 不在本机。
 5. 准备 `/opt/loboo-terminals`（权限 700）：复制 `docker-compose.yml`、`policy-loboo.json`；`.env` 沿用旧机器的值，这样 loboo-webui 里的连接 key 不用改。
 6. 迁数据：先停旧机器的编排服务，再 `rsync -a` 旧机器的 `/opt/loboo-terminals/data/` 过来（home 属主是 uid 1000，要保留；`terminals.db` 一起带上）。
-7. 构建镜像：`deploy/loboo-terminals/image/build.sh loboo/open-terminal:0.14.4-r3`。
+7. 构建镜像：`deploy/loboo-terminals/image/build.sh loboo/open-terminal:0.17.7-r4`。
 8. `cd /opt/loboo-terminals && docker compose pull && docker compose up -d`，再按「日常运维」应用策略。
 9. loboo-webui 一侧：如果 loboo-webui 也迁到了新机器并且编排服务仍在本机，连接地址 `http://127.0.0.1:18210` 不用改；否则按「在 LoboOS 里怎么接」改连接 `url`。模型默认值 `terminalId` 跟着 loboo-webui 的数据库走。
 10. 跑 `probe-network.sh` 和 `probe-user-path.sh`，再做一遍端到端。
