@@ -78,16 +78,17 @@ async def image_key(base_url: str, user: UserModel | None) -> str | None:
 
 async def on_terminal_tools(
     request, user: UserModel, terminal_id: str, metadata: dict, tools: dict, event_emitter
-) -> dict:
+) -> tuple[dict, str | None]:
     """
-    对话带上终端工具时：萝卜云的工具在这一轮第一次调用前才给 loboo-cli 写本人的 Key、拉起容器（见 cloud.py）。
-    不会让对话失败；其他终端的工具原样返回。
+    对话带上终端工具时，返回 (工具, 要追加到系统提示的说明)。萝卜云的工具在这一轮第一次调用前才给 loboo-cli
+    写本人的 Key、拉起容器、放进对话附件的原文件，说明里写附件原文件的路径（见 cloud.py）。
+    不会让对话失败；其他终端的工具原样返回，没有说明。
     """
     try:
         return await cloud.wrap_terminal_tools(request, user, terminal_id, metadata, tools, event_emitter)
     except Exception:
         log.exception('loboo: cloud terminal tools for user %s left as they are', user.id)
-        return tools
+        return tools, None
 
 
 async def terminal_skills(

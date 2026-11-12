@@ -2768,14 +2768,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     terminal_tools = terminal_result
                     terminal_system_prompt = None
                 if terminal_tools:
-                    # loboo fork: 萝卜云 wakes the member's terminal and hands loboo-cli its key on the first tool
-                    # call of the turn, not on every message (loboo/cloud.py); it never fails the chat.
+                    # loboo fork: 萝卜云 wakes the member's terminal, hands loboo-cli its key and copies in the chat's
+                    # attachments on the first tool call of the turn, not on every message (loboo/cloud.py); it never
+                    # fails the chat. Its prompt tells the model where those original files are.
                     from open_webui.loboo.hooks import on_terminal_tools
 
-                    terminal_tools = await on_terminal_tools(
+                    terminal_tools, cloud_prompt = await on_terminal_tools(
                         request, user, terminal_id, metadata, terminal_tools, event_emitter
                     )
                     tools_dict = {**tools_dict, **terminal_tools}
+                    if cloud_prompt:
+                        terminal_system_prompt = '\n\n'.join(filter(None, [terminal_system_prompt, cloud_prompt]))
                 if terminal_system_prompt:
                     form_data['messages'] = add_or_update_system_message(
                         terminal_system_prompt,

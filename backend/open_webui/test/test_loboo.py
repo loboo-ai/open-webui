@@ -875,9 +875,10 @@ async def test_loboo_cloud_wakes_the_terminal_on_the_first_tool_call(monkeypatch
     monkeypatch.setattr(cloud, 'provide_cli_key', provide_cli_key)
     monkeypatch.setattr(cloud, '_load_context', load_context)
     user = SimpleNamespace(id='u1', role='user')
-    tools = await hooks.on_terminal_tools(
+    tools, prompt = await hooks.on_terminal_tools(
         None, user, 'cloud', {'chat_id': 'c1'}, {'run_command': {'callable': run_command, 'type': 'terminal'}}, emit
     )
+    assert prompt is None
     call = tools['run_command']['callable']
     # 执行工具时 get_updated_tool_function 会按 __function__ 重新包一层；没有它，这层包装才不会被绕开。
     assert not hasattr(call, '__function__')
@@ -899,7 +900,95 @@ async def test_loboo_cloud_wakes_the_terminal_on_the_first_tool_call(monkeypatch
 
     # 其他终端的工具原样返回。
     shared = {'run_command': {'callable': run_command}}
-    assert await hooks.on_terminal_tools(None, user, 'shared', {}, shared, emit) is shared
+    tools, prompt = await hooks.on_terminal_tools(None, user, 'shared', {}, shared, emit)
+    assert tools is shared and prompt is None
+
+
+@pytest.mark.asyncio
+async def test_loboo_cloud_puts_the_chat_attachments_into_the_terminal(monkeypatch, tmp_path):
+    from open_webui.models.files import Files
+    from open_webui.storage.provider import Storage
+    from open_webui.utils import terminals
+    from open_webui.utils.access_control import files as file_access
+
+    _cloud_and_shared_terminals(monkeypatch)
+
+    async def terminal_state(user, terminal_id):
+        return {'state': 'running', 'idle_seconds': 0, 'idle_timeout_minutes': 15}
+
+    monkeypatch.setattr(cloud, 'terminal_state', terminal_state)
+    monkeypatch.setattr(config, 'ENABLED', False)
+    source = tmp_path / 'f1'
+    source.write_bytes('<html><style>b{}</style>誠譽</html>'.encode())
+    stored = {
+        'f1': SimpleNamespace(
+            id='f1', user_id='u1', path='s3://f1', filename='x', meta={'name': '誠譽財富保險-doc.html'}
+        ),
+        'f2': SimpleNamespace(id='f2', user_id='u1', path='s3://f2', filename='notes.txt', meta={}),
+        'f3': SimpleNamespace(id='f3', user_id='someone-else', path='s3://f3', filename='secret.pdf', meta={}),
+    }
+
+    async def get_file_by_id(file_id, db=None):
+        return stored.get(file_id)
+
+    async def has_access_to_file(file_id, access_type, user, db=None, user_group_ids=None):
+        return False
+
+    monkeypatch.setattr(Files, 'get_file_by_id', get_file_by_id)
+    monkeypatch.setattr(file_access, 'has_access_to_file', has_access_to_file)
+    monkeypatch.setattr(Storage, 'get_file', lambda path: str(source) if path == 's3://f1' else None)
+
+    # 成员的容器：f2 早就放进去了，模型还改过它。
+    container = {'/home/user/attachments/f2/notes.txt': b'edited'}
+    uploads = []
+
+    async def get_json(request, user, metadata, path, extra_params=None):
+        directory = path.removeprefix('/files/list?directory=')
+        names = [p.rsplit('/', 1)[1] for p in container if p.rsplit('/', 1)[0] == directory]
+        return {'dir': directory, 'entries': [{'name': name} for name in names]} if names else None
+
+    async def upload_file(url, headers, cookies, local_path, filename, **kwargs):
+        directory = url.split('?directory=', 1)[1]
+        uploads.append((headers['X-User-Id'], directory))
+        with open(local_path, 'rb') as stream:
+            container[f'{directory}/{filename}'] = stream.read()
+        return f'{directory}/{filename}'
+
+    async def move_file(url, headers, cookies, source_path, destination, **kwargs):
+        container[destination] = container.pop(source_path)
+
+    monkeypatch.setattr(terminals, 'get_terminal_json', get_json)
+    monkeypatch.setattr(cloud, 'upload_file', upload_file)
+    monkeypatch.setattr(cloud, 'move_file', move_file)
+
+    async def run_command(**kwargs):
+        return 'ok'
+
+    user = SimpleNamespace(id='u1', name='n', email='e', role='user')
+    files = [{'type': 'file', 'id': file_id} for file_id in ('f1', 'f2', 'f3', 'f1')]
+    metadata = {'chat_id': 'c1', 'files': [*files, {'type': 'collection', 'id': 'kb'}]}
+    tools, prompt = await hooks.on_terminal_tools(
+        None, user, 'cloud', metadata, {'run_command': {'callable': run_command}}, None
+    )
+
+    # 提示里是成员自己附件的原文件路径，别人的文件 id 不进提示。
+    assert '- 誠譽財富保險-doc.html：/home/user/attachments/f1/誠譽財富保險-doc.html' in prompt
+    assert '- notes.txt：/home/user/attachments/f2/notes.txt' in prompt
+    assert 'f3' not in prompt and 'secret' not in prompt
+
+    # 第一次调用终端工具前只传容器里还没有的；已有的（可能改过）不动，第二次调用不再传。
+    assert await tools['run_command']['callable'](command='ls') == 'ok'
+    assert await tools['run_command']['callable'](command='pwd') == 'ok'
+    assert uploads == [('u1', '/home/user/attachments/f1')]
+    assert container == {
+        '/home/user/attachments/f1/誠譽財富保險-doc.html': source.read_bytes(),
+        '/home/user/attachments/f2/notes.txt': b'edited',
+    }
+
+    # 可能多人共用的普通终端：不放附件，也没有提示。
+    shared = {'run_command': {'callable': run_command}}
+    tools, prompt = await hooks.on_terminal_tools(None, user, 'shared', metadata, shared, None)
+    assert tools is shared and prompt is None
 
 
 @pytest.mark.asyncio
