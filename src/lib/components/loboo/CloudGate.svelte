@@ -22,6 +22,8 @@
 	// The tab is a Shell (its chat is the Shell's session): see keepAlive.
 	export let shell = false;
 	export let chatId: string | null = null;
+	// Runs before an idle pause takes the tab down, so edits not saved yet can be kept as a draft.
+	export let beforePause: () => void = () => {};
 
 	const IDLE_AFTER_MS = 10 * 60_000;
 	const KEEPALIVE_EVERY_MS = 4 * 60_000;
@@ -113,6 +115,7 @@
 
 	const pauseWhenIdle = () => {
 		if (phase === 'open' && known !== 'unknown' && Date.now() - lastActivityAt >= IDLE_AFTER_MS) {
+			beforePause();
 			phase = 'paused';
 		}
 	};

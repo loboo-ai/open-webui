@@ -1655,6 +1655,7 @@
 					wakeRequest={cloudWakeRequests[tab.id] ?? 0}
 					shell={tab.kind === 'terminal'}
 					chatId={owner.chatId}
+					beforePause={captureView}
 				>
 				{#if tab.terminalId && !connection}
 					<div
