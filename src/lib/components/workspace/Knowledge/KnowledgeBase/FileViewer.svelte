@@ -95,7 +95,7 @@
 		const result = await excelToTable(workbook.Sheets[sheet]);
 		if (key !== request) return;
 		selectedExcelSheet = sheet;
-		previewData = { fileOfficeHtml: DOMPurify.sanitize(result.html) };
+		previewData = { fileOfficeHtml: DOMPurify.sanitize(result.html, { ADD_ATTR: ['target'] }) };
 	};
 	const loadOriginal = async () => {
 		controller?.abort();
@@ -120,7 +120,7 @@
 				data = { filePdfData: await blob.arrayBuffer() };
 			else if (ext === 'svg' || mime === 'image/svg+xml') {
 				previewName = `${name}.svg`;
-				data = { fileContent: await blob.text() };
+				data = { fileContent: await getFileIndexedText(localStorage.token, file.id!, signal) };
 				sourceToggle = true;
 			} else if (mime.startsWith('image/') || /^(png|jpe?g|gif|webp|avif|bmp|ico)$/.test(ext)) {
 				objectUrl = URL.createObjectURL(blob);
@@ -134,10 +134,10 @@
 			} else if (ext === 'docx' || mime.includes('wordprocessingml'))
 				data = { fileDocxData: await blob.arrayBuffer() };
 			else if (ext === 'xlsx' || mime.includes('spreadsheetml')) {
-				const XLSX = await import('xlsx');
+				const { readExcelWorkbook } = await import('$lib/utils/excelToTable');
 				const bytes = await blob.arrayBuffer();
 				if (signal.aborted || key !== request) return;
-				workbook = XLSX.read(bytes, { type: 'array' });
+				workbook = await readExcelWorkbook(bytes);
 				excelSheetNames = workbook.SheetNames;
 				if (!excelSheetNames.length) throw new Error('This workbook has no sheets.');
 				await selectSheet(excelSheetNames[0]);
@@ -154,7 +154,7 @@
 				) ||
 				mime.includes('json')
 			) {
-				data = { fileContent: await blob.text() };
+				data = { fileContent: await getFileIndexedText(localStorage.token, file.id!, signal) };
 				if (mime === 'text/csv' && ext !== 'csv') previewName = `${name}.csv`;
 				if (mime === 'text/html' && !/^html?$/.test(ext)) previewName = `${name}.html`;
 				if (mime.includes('json') && !/^(json|jsonc|jsonl|json5|ipynb)$/.test(ext))
@@ -205,6 +205,7 @@
 		} catch (error) {
 			toast.error(message(error));
 		} finally {
+			if (!noOriginal && (loading || 'fileContent' in previewData)) await loadOriginal();
 			saving = false;
 		}
 	};

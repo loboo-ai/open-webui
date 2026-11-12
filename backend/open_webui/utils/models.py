@@ -9,6 +9,7 @@ from open_webui.config import (
     DEFAULT_ARENA_MODEL,
 )
 from open_webui.env import BYPASS_MODEL_ACCESS_CONTROL, ENABLE_FUNCTIONS, GLOBAL_LOG_LEVEL, REDIS_KEY_PREFIX
+from open_webui.events import EVENTS, publish_event
 from open_webui.functions import get_function_models
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.config import Config
@@ -34,7 +35,7 @@ BASE_MODELS_CACHE_KEY = f'{REDIS_KEY_PREFIX}:models:base'
 
 def public_model_params(params):
     controls = params.get('model_controls', {})
-    return (
+    public = (
         {
             'model_controls': {
                 key: {
@@ -51,6 +52,9 @@ def public_model_params(params):
         if controls
         else {}
     )
+    if 'compact_token_threshold' in params:
+        public['compact_token_threshold'] = params['compact_token_threshold']
+    return public
 
 
 async def fetch_ollama_models(request: Request, user: UserModel = None):
@@ -87,12 +91,40 @@ async def get_all_base_models(request: Request, user: UserModel = None):
     return function_models + openai_models + ollama_models
 
 
+async def publish_model_availability_events(request: Request, base_models: list[dict]):
+    available_models = {model['id']: model.get('name') for model in base_models}
+    previous_models = request.app.state.BASE_MODELS_SNAPSHOT
+    request.app.state.BASE_MODELS_SNAPSHOT = available_models
+    if previous_models is None:
+        return
+
+    for model_id in sorted(available_models.keys() - previous_models.keys()):
+        await publish_event(
+            request,
+            EVENTS.MODEL_AVAILABLE,
+            subject_id=model_id,
+            subject_type='model',
+            source='system',
+            data={'name': available_models[model_id]},
+        )
+    for model_id in sorted(previous_models.keys() - available_models.keys()):
+        await publish_event(
+            request,
+            EVENTS.MODEL_UNAVAILABLE,
+            subject_id=model_id,
+            subject_type='model',
+            source='system',
+            data={'name': previous_models[model_id]},
+        )
+
+
 async def get_all_models(request, refresh: bool = False, user: UserModel = None):
     config = await Config.get_many(
         'models.base_models_cache',
         'evaluation.arena.enable',
         'evaluation.arena.models',
         'models.default_metadata',
+        'models.default_params',
     )
     if refresh:
         await openai.get_all_models.cache.clear()
@@ -119,6 +151,7 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     if base_models is None:
         base_models = await get_all_base_models(request, user=user)
+        await publish_model_availability_events(request, base_models)
         if base_models:
             request.app.state.BASE_MODELS = base_models
             if config.get('models.base_models_cache') and redis is not None:
@@ -349,13 +382,7 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     functions_by_id = {f.id: f for f in await Functions.get_functions_by_ids(list(all_function_ids))}
 
-    # Pre-warm the function module cache once per unique function ID.
-    # This ensures each function's DB freshness check runs exactly once,
-    # not once per (model × function) pair.
-    # Only attempt to load functions that actually exist in the local DB;
-    # imported/custom model configs may reference tools or filters the user
-    # hasn't installed, and trying to load those would cause persistent
-    # "Failed to load function module" log spam on every model refresh.
+    # Warm each installed function once, avoiding per-model freshness checks and errors for missing functions.
     for function_id, function in functions_by_id.items():
         try:
             await get_function_module_from_cache(request, function_id, function=function)
@@ -409,8 +436,15 @@ async def get_all_models(request, refresh: bool = False, user: UserModel = None)
 
     action_items_by_id = {}
     filter_items_by_id = {}
+    default_threshold = (config.get('models.default_params') or {}).get('compact_token_threshold')
 
     for model in models:
+        if default_threshold is not None:
+            info = model.get('info') or {}
+            model['info'] = {
+                **info,
+                'params': {'compact_token_threshold': default_threshold, **(info.get('params') or {})},
+            }
         action_ids = [
             action_id
             for action_id in set(model.pop('action_ids', [])) | global_action_ids

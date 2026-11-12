@@ -5,7 +5,7 @@
 	import { onMount, tick, getContext } from 'svelte';
 
 	import { WEBUI_BASE_URL } from '$lib/constants';
-	import { WEBUI_NAME, config, user, models, settings, showSidebar } from '$lib/stores';
+	import { baseModels, WEBUI_NAME, config, user, models, settings, showSidebar } from '$lib/stores';
 	import { chatCompletion } from '$lib/apis/openai';
 
 	import { splitStream, resolveDefaultModelIds } from '$lib/utils';
@@ -37,7 +37,7 @@
 	};
 
 	const textCompletionHandler = async () => {
-		const model = $models.find((model) => model.id === selectedModelId);
+		const model = $baseModels.find((model) => model.id === selectedModelId);
 
 		const [res, controller] = await chatCompletion(
 			localStorage.token,
@@ -109,8 +109,11 @@
 		}
 
 		selectedModelId =
-			resolveDefaultModelIds($models, $settings?.models, $config?.default_models?.split(','))[0] ??
-			'';
+			resolveDefaultModelIds(
+				$baseModels,
+				$settings?.models,
+				$config?.default_models?.split(',')
+			)[0] ?? '';
 		loaded = true;
 	});
 </script>
@@ -130,6 +133,7 @@
 							class="w-full h-full p-3 bg-transparent border border-gray-100/30 dark:border-gray-850/30 outline-hidden resize-none rounded-lg text-sm"
 							bind:value={text}
 							placeholder={$i18n.t("You're a helpful assistant.")}
+							aria-label={$i18n.t('Completions')}
 						/>
 					</div>
 				</div>
@@ -139,9 +143,10 @@
 				<div class="flex-1">
 					<select
 						class="bg-transparent border border-gray-100/30 dark:border-gray-850/30 rounded-lg py-1 px-2 -mx-0.5 text-sm outline-hidden w-full"
+						aria-label={$i18n.t('Model')}
 						bind:value={selectedModelId}
 					>
-						{#each $models as model}
+						{#each $baseModels as model}
 							<option value={model.id} class="bg-gray-50 dark:bg-gray-700">{model.name}</option>
 						{/each}
 					</select>

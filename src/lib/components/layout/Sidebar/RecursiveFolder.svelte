@@ -383,7 +383,7 @@
 					chats = mergeFolderChats(chats ?? [], [chat]);
 				}
 			},
-			setChatActive: (chatId, active) => {
+			setChatActive: (chatId, active, pendingApproval = false) => {
 				if (chats) {
 					let found = false;
 					chats = sortFolderChats(
@@ -392,7 +392,7 @@
 								return chat;
 							}
 							found = true;
-							return { ...chat, active };
+							return { ...chat, active, pending_approval: pendingApproval };
 						})
 					);
 					return found;
@@ -716,7 +716,11 @@
 	</div>
 
 	<div class="flex items-center gap-1.5">
-		<input type="checkbox" bind:checked={deleteFolderContents} />
+		<input
+			aria-label={$i18n.t('Delete all contents inside this folder')}
+			type="checkbox"
+			bind:checked={deleteFolderContents}
+		/>
 
 		<div class="text-xs text-gray-500">
 			{$i18n.t('Delete all contents inside this folder')}
@@ -734,10 +738,12 @@
 
 {#if dragged && x && y}
 	<DragGhost {x} {y}>
-		<div class=" bg-black/80 backdrop-blur-2xl px-2 py-1 rounded-lg w-fit max-w-40">
-			<div class="flex items-center gap-1">
-				<FolderIcon className="size-3.5" strokeWidth="1.5" />
-				<div class=" text-xs text-white line-clamp-1">
+		<div
+			class="w-fit max-w-40 rounded-lg bg-white/95 px-2.5 py-1.5 text-xs text-gray-600 shadow-sm ring-1 ring-black/5 dark:bg-gray-850/95 dark:text-gray-300 dark:ring-white/10"
+		>
+			<div class="flex items-center gap-1.5">
+				<FolderIcon className="size-3.5 shrink-0" strokeWidth="1.5" />
+				<div class="min-w-0 truncate">
 					{folders[folderId].name}
 				</div>
 			</div>
@@ -745,10 +751,15 @@
 	</DragGhost>
 {/if}
 
-<div bind:this={folderElement} class="relative {className}" draggable={!folders[folderId]?.shared}>
+<div
+	bind:this={folderElement}
+	class="relative {className}"
+	role="listitem"
+	draggable={!folders[folderId]?.shared}
+>
 	{#if draggedOver}
 		<div
-			class="absolute top-0 left-0 w-full h-full rounded-xs bg-gray-100/50 dark:bg-gray-700/20 bg-opacity-50 dark:bg-opacity-10 z-50 pointer-events-none touch-none"
+			class="pointer-events-none absolute inset-0 z-50 touch-none bg-black/[0.02] ring-1 ring-inset ring-black/10 dark:bg-white/[0.02] dark:ring-white/10"
 		></div>
 	{/if}
 
@@ -773,6 +784,11 @@
 			>
 				<button
 					class="text-gray-600 dark:text-gray-400 transition-all p-1 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg"
+					aria-label={open
+						? $i18n.t('Collapse {{name}}', { name: folders[folderId]?.name })
+						: $i18n.t('Expand {{name}}', { name: folders[folderId]?.name })}
+					id="folder-{folderId}-expand-button"
+					aria-expanded={open}
 					on:click={(e) => {
 						e.stopPropagation();
 						e.stopImmediatePropagation();
@@ -808,10 +824,11 @@
 				</button>
 
 				<div
-					class="translate-y-[0.5px] flex min-w-0 flex-1 self-stretch items-center gap-1.5 pr-6 text-start"
+					class="translate-y-[0.5px] flex min-w-0 flex-1 self-stretch items-center gap-1.5 text-start"
 				>
 					{#if edit}
 						<input
+							aria-label={$i18n.t('Rename')}
 							id="folder-{folderId}-input"
 							type="text"
 							bind:value={name}
@@ -833,7 +850,7 @@
 									e.currentTarget.blur();
 								}
 							}}
-							class="w-full h-full bg-transparent outline-hidden"
+							class="w-full h-full pr-6 bg-transparent outline-hidden"
 						/>
 					{:else}
 						<LinkPreview.Root
@@ -845,7 +862,7 @@
 							<LinkPreview.Trigger
 								href={`/folders/${folderId}`}
 								draggable="false"
-								class="flex min-w-0 flex-1 self-stretch -my-1 items-center gap-1.5"
+								class="flex min-w-0 flex-1 self-stretch -my-1 items-center gap-1.5 pr-6"
 								ondblclick={(e) => {
 									if (!isWritable || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
 									if (clickTimer) {
@@ -905,11 +922,13 @@
 				</div>
 
 				{#if isWritable}
-					<button
+					<div
 						class="absolute z-10 right-2 hover-reveal self-center flex items-center dark:text-gray-300"
+						role="presentation"
 						on:pointerdown={() => (openPreview = false)}
 					>
 						<FolderMenu
+							onNewChat={openFolderHandler}
 							onEdit={() => {
 								showFolderModal = true;
 							}}
@@ -931,7 +950,7 @@
 								<MoreHorizontal className="size-3.5" strokeWidth="2" />
 							</div>
 						</FolderMenu>
-					</button>
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -951,27 +970,31 @@
 								})
 							)}
 
-						{#each children as childFolder (`${folderId}-${childFolder.id}`)}
-							<svelte:self
-								bind:folderRegistry
-								{folders}
-								folderId={childFolder.id}
-								{shiftKey}
-								parentDragged={dragged}
-								{onItemMove}
-								{onDelete}
-								{onFolderUnreadCounts}
-								on:import={(e) => {
-									dispatch('import', e.detail);
-								}}
-								on:update={(e) => {
-									dispatch('update', e.detail);
-								}}
-								on:change={(e) => {
-									dispatch('change', e.detail);
-								}}
-							/>
-						{/each}
+						{#if children.length > 0}
+							<div role="list">
+								{#each children as childFolder (`${folderId}-${childFolder.id}`)}
+									<svelte:self
+										bind:folderRegistry
+										{folders}
+										folderId={childFolder.id}
+										{shiftKey}
+										parentDragged={dragged}
+										{onItemMove}
+										{onDelete}
+										{onFolderUnreadCounts}
+										on:import={(e) => {
+											dispatch('import', e.detail);
+										}}
+										on:update={(e) => {
+											dispatch('update', e.detail);
+										}}
+										on:change={(e) => {
+											dispatch('change', e.detail);
+										}}
+									/>
+								{/each}
+							</div>
+						{/if}
 					{/if}
 
 					{#if chats === null && chatsLoading}
@@ -992,29 +1015,38 @@
 						</div>
 					{/if}
 
-					{#each chats ?? [] as chat (chat.id)}
-						<ChatItem
-							id={chat.id}
-							title={chat.title}
-							createdAt={chat.created_at}
-							updatedAt={chat.updated_at}
-							lastReadAt={chat.last_read_at}
-							active={chat.active ?? false}
-							ownerName={chat.owner_name ?? null}
-							participants={chat.participants ?? []}
-							ownerUserId={folders[folderId]?.showOwnerInfo ||
-							folders[folderId]?.shared ||
-							chat.user_id !== $user?.id
-								? chat.user_id
-								: null}
-							readonly={chat.user_id !== $user?.id}
-							{shiftKey}
-							onReadStateChange={applyReadState}
-							on:change={(e) => {
-								dispatch('change', e.detail);
-							}}
-						/>
-					{/each}
+					{#if (chats ?? []).length > 0}
+						<div role="list">
+							{#each chats ?? [] as chat (chat.id)}
+								<div role="listitem">
+									<ChatItem
+										id={chat.id}
+										title={chat.title}
+										createdAt={chat.created_at}
+										updatedAt={chat.updated_at}
+										lastReadAt={chat.last_read_at}
+										active={chat.active ?? false}
+										pendingApproval={chat.pending_approval ?? false}
+										ownerName={chat.owner_name ?? null}
+										participants={chat.participants ?? []}
+										ownerUserId={folders[folderId]?.showOwnerInfo ||
+										folders[folderId]?.shared ||
+										chat.user_id !== $user?.id
+											? chat.user_id
+											: null}
+										readonly={chat.user_id !== $user?.id}
+										canMove={folders[folderId]?.user_id === $user?.id}
+										canRename={folders[folderId]?.user_id === $user?.id}
+										{shiftKey}
+										onReadStateChange={applyReadState}
+										on:change={(e) => {
+											dispatch('change', e.detail);
+										}}
+									/>
+								</div>
+							{/each}
+						</div>
+					{/if}
 
 					{#if hasMoreChats}
 						<button

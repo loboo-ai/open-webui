@@ -2,9 +2,9 @@ import asyncio
 import logging
 import re
 import time
+from itertools import zip_longest
 from typing import Any, Optional
 
-from open_webui.config import RAG_EMBEDDING_QUERY_PREFIX
 from open_webui.models.config import Config
 from open_webui.models.knowledge import KnowledgeModel
 
@@ -105,7 +105,7 @@ async def _retrieve_qdrant(connection, auth_config, knowledge, query, count, emb
     source_config = _source_config(knowledge)
     vector_field = source_config.get('vector_field') or None
 
-    vector = await embedding_function(query, prefix=RAG_EMBEDDING_QUERY_PREFIX)
+    vector = await embedding_function(query, prefix=await Config.get('rag.embedding_query_prefix'))
 
     def _search():
         client = QdrantClient(
@@ -154,7 +154,7 @@ async def _retrieve_milvus(connection, auth_config, knowledge, query, count, emb
     content_field = source_config.get('content_field') or 'data.text'
     metadata_field = source_config.get('metadata_field') or 'metadata'
 
-    vector = await embedding_function(query, prefix=RAG_EMBEDDING_QUERY_PREFIX)
+    vector = await embedding_function(query, prefix=await Config.get('rag.embedding_query_prefix'))
 
     def _search():
         client_kwargs = {
@@ -232,7 +232,7 @@ async def _retrieve_pgvector(connection, auth_config, knowledge, query, count, e
     metadata_field = source_config.get('metadata_field') or 'vmetadata'
     document_id_field = source_config.get('document_id_field') or 'id'
 
-    vector = await embedding_function(query, prefix=RAG_EMBEDDING_QUERY_PREFIX)
+    vector = await embedding_function(query, prefix=await Config.get('rag.embedding_query_prefix'))
 
     def _search():
         from psycopg import sql
@@ -326,42 +326,26 @@ async def retrieve_external_knowledge_for_connection(
     chunks = []
     provider = (connection.get('provider') or '').lower()
 
-    for query in queries:
-        if provider == 'qdrant':
-            chunks.extend(
-                await _retrieve_qdrant(
-                    connection,
-                    auth_config,
-                    knowledge,
-                    query,
-                    count,
-                    getattr(request.app.state, 'EMBEDDING_FUNCTION', None),
-                )
-            )
-        elif provider == 'milvus':
-            chunks.extend(
-                await _retrieve_milvus(
-                    connection,
-                    auth_config,
-                    knowledge,
-                    query,
-                    count,
-                    getattr(request.app.state, 'EMBEDDING_FUNCTION', None),
-                )
-            )
-        elif provider == 'pgvector':
-            chunks.extend(
-                await _retrieve_pgvector(
-                    connection,
-                    auth_config,
-                    knowledge,
-                    query,
-                    count,
-                    getattr(request.app.state, 'EMBEDDING_FUNCTION', None),
-                )
-            )
-        else:
-            raise RuntimeError(f'Unsupported external knowledge provider: {connection.get("provider")}')
+    retrieve = {
+        'qdrant': _retrieve_qdrant,
+        'milvus': _retrieve_milvus,
+        'pgvector': _retrieve_pgvector,
+    }.get(provider)
+    if not retrieve:
+        raise RuntimeError(f'Unsupported external knowledge provider: {connection.get("provider")}')
+
+    embedding_function = getattr(request.app.state, 'EMBEDDING_FUNCTION', None)
+    query_chunks = await asyncio.gather(
+        *(retrieve(connection, auth_config, knowledge, query, count, embedding_function) for query in queries)
+    )
+
+    # Score direction differs per provider and metric, so merge by rank
+    seen_contents = set()
+    for chunks_at_rank in zip_longest(*query_chunks):
+        for chunk in chunks_at_rank:
+            if chunk and chunk['content'] not in seen_contents:
+                seen_contents.add(chunk['content'])
+                chunks.append(chunk)
 
     chunks = chunks[:count]
     log.info(

@@ -121,7 +121,7 @@ export const wakeCloud = async (token: string, terminalId: string): Promise<bool
 	return woken;
 };
 
-// File cards in replies (Messages/TerminalOutputFile.svelte) show their preview only after a click while it sleeps.
+// File cards in replies (Messages/ToolOutputFile.svelte) show their preview only after a click while it sleeps.
 export const PREVIEW_ASLEEP_TEXT = '预览需要唤醒萝卜云';
 export const LOAD_PREVIEW_LABEL = '加载预览';
 

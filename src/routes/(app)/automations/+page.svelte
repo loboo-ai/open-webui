@@ -324,8 +324,16 @@
 		loaded = true;
 		ensureChannels();
 
+		let keyboardFocusedElement: Element | null = null;
+		const onFocusIn = (event: FocusEvent) => {
+			const target = event.target as Element;
+			keyboardFocusedElement = target.matches(':focus-visible:not(input, textarea)')
+				? target
+				: null;
+		};
+
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Shift') {
+			if (event.key === 'Shift' && document.activeElement !== keyboardFocusedElement) {
 				shiftKey = true;
 				openAutomationMenuId = null;
 			}
@@ -341,6 +349,7 @@
 			shiftKey = false;
 		};
 
+		window.addEventListener('focusin', onFocusIn);
 		window.addEventListener('keydown', onKeyDown);
 		window.addEventListener('keyup', onKeyUp);
 		window.addEventListener('blur', onBlur);
@@ -348,6 +357,7 @@
 		return () => {
 			clearTimeout(searchDebounceTimer);
 
+			window.removeEventListener('focusin', onFocusIn);
 			window.removeEventListener('keydown', onKeyDown);
 			window.removeEventListener('keyup', onKeyUp);
 			window.removeEventListener('blur', onBlur);
@@ -542,20 +552,14 @@
 				</div>
 			{:else}
 				<div class="gap-y-0.5 grid my-1">
+					<!-- Preserve the former row label for i18n extraction: $i18n.t('Open automation') -->
 					{#each automations as automation (automation.id)}
 						<div
-							role="button"
-							tabindex="0"
-							aria-label={$i18n.t('Open automation')}
+							role="presentation"
 							class="group flex min-h-8 w-full cursor-pointer items-center gap-2 overflow-hidden rounded-xl px-2 py-1 text-left"
-							on:click={() => {
+							on:click={(e) => {
+								if (e.target instanceof Element && e.target.closest('a')) return;
 								goto(`/automations/${automation.id}`);
-							}}
-							on:keydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									goto(`/automations/${automation.id}`);
-								}
 							}}
 						>
 							<div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
@@ -563,11 +567,11 @@
 									<div class="flex min-w-0 items-center gap-2 overflow-hidden">
 										<div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
 											<Tooltip content={automation.name} className="min-w-0" placement="top-start">
-												<div
-													class="truncate text-[0.8125rem] leading-5 text-gray-800 group-hover:underline dark:text-gray-200"
+												<a
+													href={`/automations/${automation.id}`}
+													class="focus-ring block truncate rounded text-[0.8125rem] leading-5 text-gray-800 group-hover:underline focus-visible:underline dark:text-gray-200"
+													>{automation.name}</a
 												>
-													{automation.name}
-												</div>
 											</Tooltip>
 
 											<Tooltip
@@ -653,9 +657,9 @@
 											</button>
 										</AutomationMenu>
 
-										<button
+										<div
 											class="flex h-6 items-center"
-											type="button"
+											role="presentation"
 											on:click={(e) => {
 												e.stopPropagation();
 												e.preventDefault();
@@ -666,12 +670,13 @@
 											>
 												<Switch
 													bind:state={automation.is_active}
+													ariaLabel={$i18n.t('Enabled')}
 													on:change={() => {
 														toggleHandler(automation);
 													}}
 												/>
 											</Tooltip>
-										</button>
+										</div>
 									</div>
 								{/if}
 							</div>

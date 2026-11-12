@@ -505,6 +505,15 @@ async def _status(event_emitter, data: dict) -> None:
         log.exception('loboo: cloud terminal status not shown')
 
 
+async def is_cloud_terminal(terminal_id: str | None) -> bool:
+    """萝卜云：按人分容器的终端连接（编排服务）。"""
+    from open_webui.models.config import Config
+    from open_webui.utils.terminals import is_terminal_orchestrator
+
+    connections = await Config.get('terminal_server.connections', []) or []
+    return any(item.get('id') == terminal_id and is_terminal_orchestrator(item) for item in connections)
+
+
 async def _cloud_slot(user_id: str, metadata: dict) -> tuple[str, str, str] | None:
     """萝卜云（编排服务）连接时返回缓存键 (用户, 终端, 上下文)；其他终端为 None。"""
     from open_webui.models.config import Config

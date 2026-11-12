@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from open_webui.events import EVENT_DEFINITIONS_BY_NAME, NOTIFICATION_EVENTS
 from open_webui.models.config import Config
@@ -109,7 +109,7 @@ async def _load_notifications(user_id: str) -> dict[str, Any]:
     ).strip()
 
     if not isinstance(targets, list) or not targets:
-        if legacy_url:
+        if legacy_url and not notifications.get('legacy_notification_events_migrated'):
             target = _normalize_target(
                 {
                     'id': DEFAULT_TARGET_ID,
@@ -129,9 +129,10 @@ async def _load_notifications(user_id: str) -> dict[str, Any]:
             await Users.update_user_settings_by_id(user_id, {'notifications': notifications})
     else:
         notifications['targets'] = [target for target in targets if isinstance(target, dict)]
-        notifications.setdefault(
-            'default_target_id', notifications['targets'][0].get('id') if notifications['targets'] else None
-        )
+        if not notifications.get('default_target_id'):
+            notifications['default_target_id'] = (
+                notifications['targets'][0].get('id') if notifications['targets'] else None
+            )
         if legacy_url and not notifications.get('legacy_notification_events_migrated'):
             changed = False
             for target in notifications['targets']:
@@ -172,7 +173,8 @@ async def create_target(user_id: str, payload: dict[str, Any]) -> dict[str, Any]
             suffix += 1
     targets.append(target)
     notifications['targets'] = targets
-    notifications.setdefault('default_target_id', target['id'])
+    if not notifications.get('default_target_id'):
+        notifications['default_target_id'] = target['id']
     await Users.update_user_settings_by_id(user_id, {'notifications': notifications})
     return _public_target(target, notifications.get('default_target_id'))
 
@@ -385,7 +387,26 @@ async def notify_target(
 
 
 async def dispatch_notification_event(app: Any, event: Any) -> None:
-    if event.event not in VALID_EVENTS or not await Config.get('ui.enable_user_webhooks'):
+    if event.event not in VALID_EVENTS:
+        return
+
+    # Tether delivery is independent of webhooks and of whether a WebUI page is loaded.
+    if event.event in {CHAT_FINISHED_EVENT, CHAT_FAILED_EVENT, CALENDAR_ALERT_EVENT}:
+        from open_webui.utils.tether import notify
+
+        data = event.data or {}
+        chat_id = data.get('chat_id') or (event.subject or {}).get('id')
+        if event.event == CALENDAR_ALERT_EVENT or (chat_id and not str(chat_id).startswith('local:')):
+            path = '/calendar' if event.event == CALENDAR_ALERT_EVENT else '/c/' + quote(str(chat_id), safe='')
+            title = str(data.get('title') or event.message or 'Open WebUI')
+            body = str(data.get('message') or '')
+            body = re.sub(r'<details\b[^>]*>.*?</details>', '', body, flags=re.DOTALL | re.IGNORECASE)
+            try:
+                await notify(data.get('user_id'), event.id, f'{title} / Open WebUI', body, path)
+            except Exception:
+                log.exception('Tether notification delivery failed for event %s', event.id)
+
+    if not await Config.get('ui.enable_user_webhooks'):
         return
 
     from open_webui.events import event_user_ids

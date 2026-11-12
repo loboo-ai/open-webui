@@ -110,6 +110,18 @@ async def terminal_agents_md(request, user: UserModel, metadata: dict, extra_par
     return await cloud.terminal_agents_md(request, user, metadata, extra_params)
 
 
+async def lists_agent_models(terminal_id: str) -> bool:
+    """
+    模型列表里列不列这个终端的 agent 模型。萝卜云不列：页面每次加载模型列表都去问，会把成员的容器叫醒或续命，
+    而它的 Open Terminal（0.14.4）没有 /agents。镜像支持以后再放开。查不到配置时照上游列。
+    """
+    try:
+        return not await cloud.is_cloud_terminal(terminal_id)
+    except Exception:
+        log.exception('loboo: could not tell whether terminal %s is the cloud terminal', terminal_id)
+        return True
+
+
 def _within_cpa(target: str) -> bool:
     """target 是规范化后的地址：CPA 接入地址本身或其下的路径。"""
     base = config.LOBOO_CPA_BASE_URL

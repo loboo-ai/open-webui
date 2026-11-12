@@ -120,7 +120,7 @@
 			type="button"
 			{disabled}
 			aria-expanded={show}
-			aria-label={label || triggerLabel || placeholder}
+			aria-label={label ? undefined : triggerLabel || placeholder}
 			class={label
 				? 'grid w-full grid-cols-[7rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-1 py-1.5 text-left text-xs font-normal disabled:cursor-default sm:grid-cols-[8rem_minmax(0,1fr)_auto]'
 				: 'flex min-w-0 items-center bg-transparent text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'}
@@ -184,6 +184,11 @@
 						</div>
 					{:else}
 						{#each sortedItems as item (item.id)}
+							{@const itemDescription = resolveLocalizedResource(
+								item,
+								$i18n.language,
+								'description'
+							)}
 							<button
 								type="button"
 								class="flex min-h-7 w-full items-center justify-between gap-2 rounded-xl px-2 py-1 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-800 selected-command-option-button"
@@ -193,9 +198,16 @@
 									selectItem(item);
 								}}
 							>
-								<span class="min-w-0 flex-1 truncate"
-									>{resolveLocalizedResource(item, $i18n.language)}</span
-								>
+								<span class="min-w-0 flex-1">
+									<span class="block truncate"
+										>{resolveLocalizedResource(item, $i18n.language)}</span
+									>
+									{#if itemDescription}
+										<span class="block truncate text-gray-500 dark:text-gray-400"
+											>{itemDescription}</span
+										>
+									{/if}
+								</span>
 								{#if item.is_global}<span class="text-[0.6875rem] text-gray-500"
 										>{$i18n.t('Global')}</span
 									>{/if}

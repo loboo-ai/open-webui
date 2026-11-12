@@ -14,7 +14,7 @@
 		WEBUI_API_BASE_URL,
 		WEBUI_BASE_URL
 	} from '$lib/constants';
-	import { WEBUI_NAME, config, user, models, settings } from '$lib/stores';
+	import { baseModels, WEBUI_NAME, config, user, models, settings } from '$lib/stores';
 
 	import { chatCompletion } from '$lib/apis/openai';
 
@@ -93,7 +93,7 @@
 			return;
 		}
 
-		const model = $models.find((model) => model.id === selectedModelId);
+		const model = $baseModels.find((model) => model.id === selectedModelId);
 		if (!model) {
 			selectedModelId = '';
 			return;
@@ -118,7 +118,7 @@
 						: undefined,
 					...messages
 				].filter((message) => message),
-				...(Object.keys(activeParams).length > 0 ? activeParams : {})
+				...(Object.keys(activeParams).length > 0 ? { params: activeParams } : {})
 			},
 			`${WEBUI_BASE_URL}/api`
 		);
@@ -309,18 +309,21 @@
 		}
 
 		selectedModelId =
-			resolveDefaultModelIds($models, $settings?.models, $config?.default_models?.split(','))[0] ??
-			'';
+			resolveDefaultModelIds(
+				$baseModels,
+				$settings?.models,
+				$config?.default_models?.split(',')
+			)[0] ?? '';
 		loaded = true;
 	});
 </script>
 
-<Modal size="sm" bind:show={showControls}>
+<Modal ariaLabel={$i18n.t('Controls')} size="sm" bind:show={showControls}>
 	<div class="text-gray-700 dark:text-gray-100">
 		<div class="flex justify-between px-4 pt-3 pb-1">
 			<div class="text-sm font-medium self-center">{$i18n.t('Controls')}</div>
 			<button
-				class="self-center rounded-lg p-1 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+				class="self-center rounded-lg py-1 text-gray-500 transition hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-0"
 				aria-label={$i18n.t('Close')}
 				on:click={() => {
 					showControls = false;
@@ -357,7 +360,12 @@
 						{/if}
 
 						<div class="shrink-0">
-							<button class="p-1.5 bg-transparent hover:bg-white/5 transition rounded-lg">
+							<button
+								type="button"
+								class="p-1.5 bg-transparent hover:bg-white/5 transition rounded-lg"
+								aria-label={$i18n.t('System Instructions')}
+								aria-expanded={showSystem}
+							>
 								{#if showSystem}
 									<ChevronUp className="size-3.5" />
 								{:else}
@@ -374,6 +382,7 @@
 								class="w-full h-full bg-transparent resize-none outline-hidden text-sm"
 								bind:value={system}
 								placeholder={$i18n.t("You're a helpful assistant.")}
+								aria-label={$i18n.t('System Instructions')}
 								on:input={() => {
 									resizeSystemTextarea();
 								}}
@@ -452,6 +461,9 @@
 							placeholder={$i18n.t(`Enter {{role}} message here`, {
 								role: role === 'user' ? $i18n.t('a user') : $i18n.t('an assistant')
 							})}
+							aria-label={$i18n.t(`Enter {{role}} message here`, {
+								role: role === 'user' ? $i18n.t('a user') : $i18n.t('an assistant')
+							})}
 							on:input={(e) => {
 								e.target.style.height = '';
 								e.target.style.height = Math.min(e.target.scrollHeight, 150) + 'px';
@@ -474,10 +486,6 @@
 								false)
 									? ''
 									: 'outline-hidden'}"
-								aria-pressed={role === 'assistant'}
-								aria-label={role === 'user'
-									? $i18n.t('Switch to Assistant role')
-									: $i18n.t('Switch to User role')}
 								on:click={() => {
 									role = role === 'user' ? 'assistant' : 'user';
 								}}
@@ -487,6 +495,11 @@
 								{:else}
 									{$i18n.t('Assistant')}
 								{/if}
+								<span class="sr-only"
+									>{role === 'user'
+										? $i18n.t('Switch to Assistant role')
+										: $i18n.t('Switch to User role')}</span
+								>
 							</button>
 						</div>
 
@@ -494,9 +507,10 @@
 							<div class="flex-1">
 								<select
 									class=" bg-transparent border border-gray-100/30 dark:border-gray-850/30 rounded-lg py-1 px-2 -mx-0.5 text-sm outline-hidden w-full"
+									aria-label={$i18n.t('Model')}
 									bind:value={selectedModelId}
 								>
-									{#each $models as model}
+									{#each $baseModels as model}
 										<option value={model.id} class="bg-gray-50 dark:bg-gray-700"
 											>{model.name}</option
 										>

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { applyTetherToken } from '$lib/utils/tether';
+
 	import DOMPurify from 'dompurify';
 	import MfaChallengeForm from '$lib/components/auth/MfaChallenge.svelte';
 	import { mfaRequest, type MfaChallenge } from '$lib/apis/auths/mfa';
@@ -60,6 +62,16 @@
 				confirmPassword = '';
 				return;
 			}
+			if (window.tether && sessionUser.token) {
+				try {
+					const access = await window.tether.signedIn(sessionUser.token);
+					sessionUser = { ...sessionUser, token: access.token, expires_at: access.expiresAt };
+					await applyTetherToken(access);
+				} catch (error) {
+					toast.error(String(error));
+					return;
+				}
+			}
 			toast.success($i18n.t(`You're now logged in.`));
 			if (sessionUser.token) {
 				localStorage.token = sessionUser.token;
@@ -75,7 +87,8 @@
 			}
 
 			if (!redirectPath) {
-				redirectPath = $page.url.searchParams.get('redirect') || '/';
+				redirectPath =
+					sessionStorage.getItem('auth:continue') || $page.url.searchParams.get('redirect') || '/';
 			}
 
 			await goto(redirectPath);
@@ -161,7 +174,10 @@
 		}
 
 		localStorage.token = token;
-		await setSessionUser(sessionUser, localStorage.getItem('redirectPath') || null);
+		await setSessionUser(
+			sessionUser,
+			sessionStorage.getItem('auth:continue') || localStorage.getItem('redirectPath') || null
+		);
 	};
 
 	let onboarding = false;
@@ -249,17 +265,18 @@
 	}}
 />
 
-<div class="w-full h-screen max-h-[100dvh] text-white relative" id="auth-page">
+<div class="w-full h-dvh text-white relative" id="auth-page">
+	<div id="main-content" tabindex="-1" class="sr-only left-0 top-0"></div>
 	<div class="w-full h-full absolute top-0 left-0 bg-white dark:bg-black"></div>
 
 	<div class="w-full absolute top-0 left-0 right-0 h-8 drag-region" />
 
-	{#if loaded}
+	{#if loaded && !onboarding}
 		<div
-			class="fixed bg-transparent min-h-screen w-full flex justify-center z-50 text-black dark:text-white"
+			class="fixed inset-0 h-dvh overflow-y-auto bg-transparent w-full z-50 text-black dark:text-white"
 			id="auth-container"
 		>
-			<div class="w-full px-6 min-h-screen flex flex-col text-center">
+			<div class="w-full p-6 min-h-full flex flex-col text-center">
 				{#if mfaChallenge}
 					<div class="my-auto mx-auto w-full sm:max-w-md shrink-0">
 						<MfaChallengeForm
@@ -291,7 +308,10 @@
 					</div>
 				{:else}
 					<div class="my-auto flex flex-col justify-center items-center">
-						<div id="auth-login-card" class=" sm:max-w-md my-auto pb-10 w-full dark:text-gray-100">
+						<div
+							id="auth-login-card"
+							class=" sm:max-w-md my-auto sm:pb-10 w-full dark:text-gray-100"
+						>
 							{#if $config?.metadata?.auth_logo_position === 'center'}
 								<div class="flex justify-center mb-6">
 									<!-- LICENSE covers this Open WebUI sign-in logo.
@@ -384,7 +404,8 @@
 												>
 												<input
 													bind:value={email}
-													type="email"
+													type="text"
+													inputmode="email"
 													id="email"
 													class="my-0.5 w-full text-[0.8125rem] leading-5 outline-hidden bg-transparent placeholder:text-gray-300 dark:placeholder:text-gray-600"
 													autocomplete="email"
@@ -440,9 +461,9 @@
 									{#if $config?.features.enable_login_form || $config?.features.enable_ldap || form}
 										{#if mode === 'ldap'}
 											<button
-												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-[0.8125rem] leading-5 py-2.5 disabled:opacity-50 flex justify-center"
+												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-[0.8125rem] leading-5 py-2.5 aria-disabled:opacity-50 flex justify-center"
 												type="submit"
-												disabled={submitting}
+												aria-disabled={submitting}
 											>
 												<div class="self-center">{$i18n.t('Authenticate')}</div>
 
@@ -454,9 +475,9 @@
 											</button>
 										{:else}
 											<button
-												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-[0.8125rem] leading-5 py-2.5 disabled:opacity-50 flex justify-center"
+												class="bg-gray-700/5 hover:bg-gray-700/10 dark:bg-gray-100/5 dark:hover:bg-gray-100/10 dark:text-gray-300 dark:hover:text-white transition w-full rounded-full font-normal text-[0.8125rem] leading-5 py-2.5 aria-disabled:opacity-50 flex justify-center"
 												type="submit"
-												disabled={submitting}
+												aria-disabled={submitting}
 											>
 												<div class="self-center">
 													{mode === 'signin'
@@ -669,8 +690,12 @@
 			</div>
 		</div>
 
-		{#if !$config?.metadata?.auth_logo_position}
-			<div class="fixed m-10 z-50">
+		{#if !$config?.metadata?.auth_logo_position || $config?.metadata?.auth_logo_position === 'top-right'}
+			<div
+				class="fixed top-0 m-10 z-50"
+				class:left-0={!$config?.metadata?.auth_logo_position}
+				class:right-0={$config?.metadata?.auth_logo_position === 'top-right'}
+			>
 				<div class="flex space-x-2">
 					<div class=" self-center">
 						<!-- LICENSE covers this Open WebUI sign-in logo.

@@ -124,10 +124,10 @@
 				<div class="">
 					<button
 						type="button"
-						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-2.5 text-xs font-normal text-gray-800 transition hover:bg-gray-100/70 disabled:opacity-60 dark:bg-gray-850 dark:text-white dark:hover:bg-gray-850/60"
+						class="inline-flex h-6 items-center gap-1 rounded-lg px-1.5 text-xs font-normal text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
 						on:click={onAdd}
 					>
-						<Plus className="size-3.5 " />
+						<Plus className="size-3" />
 						<span>{$i18n.t('Add Member')}</span>
 					</button>
 				</div>
@@ -158,6 +158,7 @@
 							bind:value={query}
 							on:input={handleSearchInput}
 							placeholder={$i18n.t('Search')}
+							aria-label={$i18n.t('Search')}
 						/>
 					</div>
 				</div>
@@ -250,7 +251,7 @@
 											type="button"
 											aria-label={$i18n.t('Remove {{name}}', { name: app.name })}
 											disabled={!!removingApp}
-											class="rounded-lg p-1 hover:bg-gray-100 dark:hover:bg-gray-850 transition disabled:opacity-50"
+											class="rounded-lg py-1 transition disabled:opacity-50 hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
 											on:click={async () => {
 												removingApp = app.id;
 												try {
@@ -308,7 +309,8 @@
 									{#if onRemove}
 										<div>
 											<button
-												class=" rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-850 transition disabled:opacity-50 disabled:cursor-not-allowed"
+												aria-label={$i18n.t('Remove {{name}}', { name: user.name })}
+												class="rounded-full py-1 transition disabled:opacity-50 disabled:cursor-not-allowed hover:text-gray-900 dark:hover:text-gray-100 text-gray-500 dark:text-gray-400 px-0"
 												type="button"
 												disabled={user.id === $_user?.id}
 												on:click={() => {

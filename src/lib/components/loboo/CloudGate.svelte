@@ -1,24 +1,27 @@
 <script lang="ts">
-	// loboo fork: the file panel's gate for 萝卜云 (ChatControls wraps FileNav in it). Everything the panel does
-	// reaches the cloud computer and keeps it awake, so the panel runs only while someone is there:
-	// - asleep when the panel opens: a card wakes it on request; asking to see a file (display_file, 在文件中打开)
-	//   wakes it straight away;
-	// - nobody has touched the page for 10 minutes: the panel is taken down until 继续;
-	// - a Shell is open and was used in the last 5 minutes: a request every 4 minutes, because the orchestrator counts
-	//   only the start of the Shell's WebSocket as use, not what goes over it.
-	// Terminals that are not 萝卜云, and an unknown state, get the panel as it always was.
+	// loboo fork: the gate for 萝卜云 in the tab panel (ChatTabs wraps every tab in it; tabs of no terminal pass
+	// straight through). Everything such a tab does reaches the cloud computer and keeps it awake, and tabs come back
+	// with a chat whether or not the panel shows, so a tab runs only while someone is there:
+	// - asleep when the tab mounts: a card wakes it on request; asking for the tab (a file to show through
+	//   display_file or 在文件中打开, a terminal to start) wakes it straight away (wakeRequest);
+	// - nobody has touched the page for 10 minutes: the tab is taken down until 继续;
+	// - a Shell tab was used in the last 5 minutes: a request every 4 minutes, because the orchestrator counts only
+	//   the start of the Shell's WebSocket as use, not what goes over it.
+	// Terminals that are not 萝卜云, and an unknown state, get the tab as it always was.
 	import { onMount } from 'svelte';
-	import {
-		connectedUserTerminals,
-		selectedTerminalId,
-		settings,
-		showFileNavPath,
-		terminalServers
-	} from '$lib/stores';
+	import { settings, terminalServers } from '$lib/stores';
 	import { resolveTerminalConnection, terminalRequest } from '$lib/apis/terminal';
 	import { getCloudState, mayBeCloudTerminal, wakeCloud, type CloudState } from '$lib/loboo';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
+
+	// The tab's terminal; null for tabs of none.
+	export let terminalId: string | null = null;
+	// ChatTabs bumps it when someone asks for this tab: wake straight away instead of showing the asleep card.
+	export let wakeRequest = 0;
+	// The tab is a Shell (its chat is the Shell's session): see keepAlive.
+	export let shell = false;
+	export let chatId: string | null = null;
 
 	const IDLE_AFTER_MS = 10 * 60_000;
 	const KEEPALIVE_EVERY_MS = 4 * 60_000;
@@ -28,7 +31,7 @@
 
 	// Starts closed so FileNav cannot mount (and reach the terminal) before the first gate() call.
 	let phase: Phase = 'checking';
-	// The terminal being gated: the selected one when it may be 萝卜云, otherwise null and the panel just opens;
+	// The terminal being gated: the tab's when it may be 萝卜云, otherwise null and the tab just opens;
 	// undefined until the first gate() call.
 	let gatedId: string | null | undefined = undefined;
 	// What the backend last said; pausing and keeping awake apply only once it has said running or sleeping.
@@ -71,15 +74,20 @@
 		else phase = 'open';
 	};
 
-	// The terminal list arrives after the page (null until then): wait for it rather than open the panel early.
-	$: if ($terminalServers !== null) {
-		gate(mayBeCloudTerminal($selectedTerminalId, $terminalServers) ? $selectedTerminalId : null);
+	// The terminal list arrives after the page (null until then): wait for it rather than open the tab early.
+	$: if (!terminalId) {
+		gate(null);
+	} else if ($terminalServers !== null) {
+		gate(mayBeCloudTerminal(terminalId, $terminalServers) ? terminalId : null);
 	}
 
-	// Asked to show a file: wake it and open the panel, which then takes the request from the store.
-	$: if ($showFileNavPath && phase !== 'open' && gatedId) {
-		if (phase !== 'waking') void wakeCloud(token(), gatedId);
-		openPanel();
+	let handledWakeRequest = 0;
+	$: if (wakeRequest > handledWakeRequest && gatedId !== undefined) {
+		handledWakeRequest = wakeRequest;
+		if (gatedId && phase !== 'open') {
+			if (phase !== 'waking') void wakeCloud(token(), gatedId);
+			openPanel();
+		}
 	}
 
 	const wake = async () => {
@@ -91,17 +99,16 @@
 	};
 
 	const keepAlive = () => {
-		if (phase !== 'open' || known === 'unknown' || !gatedId) return;
+		if (!shell || phase !== 'open' || known === 'unknown' || !gatedId) return;
 		if (Date.now() - lastActivityAt >= KEEPALIVE_WITHIN_MS) return;
-		const shell = [...$connectedUserTerminals.values()].find((s) => s.terminalId === gatedId);
 		const connection = resolveTerminalConnection(
 			gatedId,
 			$terminalServers ?? [],
 			($settings as { terminalServers?: { url: string; key?: string }[] })?.terminalServers ?? [],
 			token()
 		);
-		if (!shell || !connection) return;
-		void terminalRequest(connection, shell.chatId, '/api/config').catch(() => {});
+		if (!connection) return;
+		void terminalRequest(connection, chatId, '/api/config').catch(() => {});
 	};
 
 	const pauseWhenIdle = () => {

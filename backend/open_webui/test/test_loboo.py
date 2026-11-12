@@ -844,6 +844,9 @@ async def test_loboo_cloud_plain_messages_leave_the_terminal_asleep(monkeypatch)
     for _ in range(2):
         await hooks.terminal_skills(None, user, {'terminal_id': 'shared'}, {})
     assert asked == [('shared', '/skills')] * 2
+    # 加载模型列表不去萝卜云里找 agent 模型（会把容器叫醒）；其他终端照上游去找。
+    assert not await hooks.lists_agent_models('cloud')
+    assert await hooks.lists_agent_models('shared')
 
 
 @pytest.mark.asyncio

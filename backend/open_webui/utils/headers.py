@@ -19,6 +19,7 @@ from open_webui.env import (
     FORWARD_USER_INFO_HEADER_USER_ROLE,
 )
 from open_webui.models.groups import Groups
+from open_webui.utils.oauth import get_system_oauth_token
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +131,8 @@ def parse_custom_headers(
     if not user_agent:
         user_agent = metadata.get('user_agent', '') or ''
 
+    client_ip = getattr(getattr(request, 'client', None), 'host', None) or metadata.get('client_ip', '') or ''
+
     # Extract user_message info for tree mapping
     user_message = metadata.get('user_message') or {}
     user_message_id = metadata.get('user_message_id', '') or (user_message.get('id', '') if user_message else '')
@@ -152,6 +155,8 @@ def parse_custom_headers(
         '{{USER_GROUPS}}': ','.join(group.name.strip() for group in user_groups) if user_groups else '',
         '{{USER_GROUP_IDS}}': ','.join(group.id for group in user_groups) if user_groups else '',
         '{{USER_AGENT}}': user_agent,
+        '{{USER_IP}}': client_ip,
+        '{{X_FORWARDED_FOR}}': client_ip,
         '{{AUTH_TYPE}}': getattr(getattr(request, 'state', None), 'auth_type', None) or '',
     }
 
@@ -210,16 +215,7 @@ async def get_headers_and_cookies(
     elif auth_type == 'session':
         token = request.state.token.credentials
     elif auth_type == 'system_oauth':
-        oauth_token = None
-        try:
-            if request.cookies.get('oauth_session_id', None):
-                oauth_token = await request.app.state.oauth_manager.get_oauth_token(
-                    user.id,
-                    request.cookies.get('oauth_session_id', None),
-                )
-        except Exception as e:
-            log.error(f'Error getting OAuth token: {e}')
-
+        oauth_token = await get_system_oauth_token(request, user) if user else None
         if oauth_token:
             token = f'{oauth_token.get("access_token", "")}'
 

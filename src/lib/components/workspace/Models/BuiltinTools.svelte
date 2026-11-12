@@ -2,6 +2,7 @@
 	import { getContext } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
+	import { config, visibleControls } from '$lib/stores';
 	import ModelSettingToggle from './ModelSettingToggle.svelte';
 	import ModelSettingsSection from './ModelSettingsSection.svelte';
 
@@ -19,7 +20,8 @@
 		},
 		memory: {
 			label: $i18n.t('settings.admin.models.builtinTools.memory.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.memory.description')
+			description: $i18n.t('settings.admin.models.builtinTools.memory.description'),
+			enabled: $config?.features?.enable_memories
 		},
 		chats: {
 			label: $i18n.t('settings.admin.models.builtinTools.chats.label'),
@@ -27,7 +29,8 @@
 		},
 		notes: {
 			label: $i18n.t('settings.admin.models.builtinTools.notes.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.notes.description')
+			description: $i18n.t('settings.admin.models.builtinTools.notes.description'),
+			enabled: $config?.features?.enable_notes
 		},
 		knowledge: {
 			label: $i18n.t('settings.admin.models.builtinTools.knowledge.label'),
@@ -39,23 +42,28 @@
 		},
 		channels: {
 			label: $i18n.t('settings.admin.models.builtinTools.channels.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.channels.description')
+			description: $i18n.t('settings.admin.models.builtinTools.channels.description'),
+			enabled: $config?.features?.enable_channels
 		},
 		notifications: {
 			label: $i18n.t('settings.admin.models.builtinTools.notifications.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.notifications.description')
+			description: $i18n.t('settings.admin.models.builtinTools.notifications.description'),
+			enabled: $config?.features?.enable_user_webhooks
 		},
 		web_search: {
 			label: $i18n.t('settings.admin.models.builtinTools.webSearch.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.webSearch.description')
+			description: $i18n.t('settings.admin.models.builtinTools.webSearch.description'),
+			enabled: $config?.features?.enable_web_search
 		},
 		image_generation: {
 			label: $i18n.t('settings.admin.models.builtinTools.imageGeneration.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.imageGeneration.description')
+			description: $i18n.t('settings.admin.models.builtinTools.imageGeneration.description'),
+			enabled: $config?.features?.enable_image_generation
 		},
 		code_interpreter: {
 			label: $i18n.t('settings.admin.models.builtinTools.codeInterpreter.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.codeInterpreter.description')
+			description: $i18n.t('settings.admin.models.builtinTools.codeInterpreter.description'),
+			enabled: $config?.features?.enable_code_interpreter
 		},
 		tasks: {
 			label: $i18n.t('settings.admin.models.builtinTools.tasks.label'),
@@ -63,25 +71,41 @@
 		},
 		automations: {
 			label: $i18n.t('settings.admin.models.builtinTools.automations.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.automations.description')
+			description: $i18n.t('settings.admin.models.builtinTools.automations.description'),
+			enabled: $config?.features?.enable_automations
 		},
 		calendar: {
 			label: $i18n.t('settings.admin.models.builtinTools.calendar.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.calendar.description')
+			description: $i18n.t('settings.admin.models.builtinTools.calendar.description'),
+			enabled: $config?.features?.enable_calendar
 		},
 		subagents: {
 			label: $i18n.t('settings.admin.models.builtinTools.subagents.label'),
-			description: $i18n.t('settings.admin.models.builtinTools.subagents.description')
+			description: $i18n.t('settings.admin.models.builtinTools.subagents.description'),
+			enabled: $config?.features?.enable_subagents
 		},
 		skills: {
 			label: $i18n.t('settings.admin.models.builtinTools.skills.label'),
 			description: $i18n.t('settings.admin.models.builtinTools.skills.description')
+		},
+		tools: {
+			label: $i18n.t('settings.admin.models.builtinTools.tools.label'),
+			description: $i18n.t('settings.admin.models.builtinTools.tools.description'),
+			enabled: $config?.features?.enable_tools
 		}
 	};
 
-	$: allTools = Object.keys(toolLabels ?? {}) as Array<keyof typeof toolLabels>;
+	// with File Context on, attached files go into the prompt instead
+	$: allTools = (Object.keys(toolLabels ?? {}) as Array<keyof typeof toolLabels>).filter(
+		(key) =>
+			(toolLabels[key].enabled ?? true) &&
+			(key === 'files'
+				? (capabilities.file_upload ?? true) && !(capabilities.file_context ?? true)
+				: (capabilities[key] ?? true))
+	);
 
 	export let builtinTools: Record<string, boolean> = {};
+	export let capabilities: Record<string, boolean> = {};
 	export let disabled = false;
 	$: enabledTools = allTools.filter((key) => builtinTools[key] !== false);
 
@@ -96,42 +120,44 @@
 </script>
 
 <!-- Previous labels retained for i18n extraction: {$i18n.t('Used in native function calling mode. Workspace settings and user permissions still apply.')} -->
-<ModelSettingsSection
-	label={$i18n.t('settings.admin.models.builtinTools.title')}
-	description={$i18n.t(
-		'Choose which built-in tools this model can use when Builtin Tools is enabled.'
-	)}
->
-	<!-- Previous labels retained for i18n extraction:
-	{$i18n.t('All allowed')}
-	{$i18n.t('{{COUNT}} disabled')}
-	{$i18n.t('{{COUNT}} of {{TOTAL}} enabled')}
-	-->
-	<span slot="summary" class="flex min-w-0 items-center gap-1 text-gray-900 dark:text-gray-100">
-		<span class="min-w-0 truncate"
-			>{enabledTools
-				.slice(0, 3)
-				.map((key) => toolLabels[key].label)
-				.join(', ') || $i18n.t('None')}</span
-		>
-		{#if enabledTools.length > 3}<span class="shrink-0 text-gray-500"
-				>+{enabledTools.length - 3}</span
-			>{/if}
-	</span>
-	<!-- Previous labels retained for i18n extraction:
-	{$i18n.t('Search built-in tools')}
-	{$i18n.t('Assistance')}
-	{$i18n.t('Work')}
-	-->
-	<div class="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-		{#each allTools as key}
-			<ModelSettingToggle
-				label={toolLabels[key].label}
-				description={toolLabels[key].description}
-				checked={builtinTools[key] !== false}
-				{disabled}
-				on:change={(e) => setBuiltinTool(key, e.detail)}
-			/>
-		{/each}
-	</div>
-</ModelSettingsSection>
+{#if allTools.some((key) => $visibleControls[`model_editor.tools.${key}`])}
+	<ModelSettingsSection
+		label={$i18n.t('settings.admin.models.builtinTools.title')}
+		description={$i18n.t(
+			'Choose which built-in tools this model can use when Builtin Tools is enabled.'
+		)}
+	>
+		<!-- Previous labels retained for i18n extraction:
+		{$i18n.t('All allowed')}
+		{$i18n.t('{{COUNT}} disabled')}
+		{$i18n.t('{{COUNT}} of {{TOTAL}} enabled')}
+		-->
+		<span slot="summary" class="flex min-w-0 items-center gap-1 text-gray-900 dark:text-gray-100">
+			<span class="min-w-0 truncate"
+				>{enabledTools
+					.slice(0, 3)
+					.map((key) => toolLabels[key].label)
+					.join(', ') || $i18n.t('None')}</span
+			>
+			{#if enabledTools.length > 3}<span class="shrink-0 text-gray-500"
+					>+{enabledTools.length - 3}</span
+				>{/if}
+		</span>
+		<!-- Previous labels retained for i18n extraction:
+		{$i18n.t('Search built-in tools')}
+		{$i18n.t('Assistance')}
+		{$i18n.t('Work')}
+		-->
+		<div class="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
+			{#each allTools.filter((key) => $visibleControls[`model_editor.tools.${key}`]) as key}
+				<ModelSettingToggle
+					label={toolLabels[key].label}
+					description={toolLabels[key].description}
+					checked={builtinTools[key] !== false}
+					{disabled}
+					on:change={(e) => setBuiltinTool(key, e.detail)}
+				/>
+			{/each}
+		</div>
+	</ModelSettingsSection>
+{/if}
