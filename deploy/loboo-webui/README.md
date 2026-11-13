@@ -1,6 +1,6 @@
 # loboo-webui 部署与运维
 
-loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com`；小程序里用 `https://m.haina-api.net`（小程序只能打开它后台配置的业务域名，业务域名要求已备案）。两个域名是同一个服务。萝卜服务首页的「ChatGPT」卡片和小程序首页的「问一问」免密进入这里，对话、生成和编辑图片都用成员本人的 CPA Key。萝卜接入的代码在 `backend/open_webui/loboo/`。
+loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com`；小程序里用 `https://m.haina-api.net`（小程序只能打开它后台配置的业务域名，业务域名要求已备案）。两个域名是同一个服务。萝卜服务首页和小程序首页的「Chat」、「我的电脑」里的云端电脑免密进入这里（小程序里这一页的标题是「云端电脑」），对话、生成和编辑图片都用成员本人的 CPA Key。萝卜接入的代码在 `backend/open_webui/loboo/`。
 
 ## 布局
 

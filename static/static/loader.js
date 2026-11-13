@@ -1,11 +1,11 @@
 // loboo fork: inside the Loboo mini program web-view there is no password form to fall back to.
 // When the session is lost the page goes back to the mini program to re-enter with a fresh ticket
-// through Loboo's entry (the same page the 问一问 card on the mini program home opens);
+// through Loboo's entry (the same page the card on the mini program home opens);
 // signing out returns to the mini program home. REENTRY must match backend/open_webui/loboo/pages.py.
 (function () {
 	if (!/miniprogram/i.test(navigator.userAgent)) return;
 
-	var REENTRY = '/pages/web/index?to=page&path=%2Faccount%2Fapi%2Fopenwebui%2Fenter&title=%E9%97%AE%E4%B8%80%E9%97%AE';
+	var REENTRY = '/pages/web/index?to=page&path=%2Faccount%2Fapi%2Fopenwebui%2Fenter&title=%E4%BA%91%E7%AB%AF%E7%94%B5%E8%84%91';
 	var HOME = '/pages/home/index';
 	var JWEIXIN = 'https://res.wx.qq.com/open/js/jweixin-1.6.0.js';
 	// Re-entries in the last 30 seconds; after two the page stays put instead of bouncing.

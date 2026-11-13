@@ -50,17 +50,17 @@
 		<script>
 			// loboo fork: inside the WeChat mini program the theme follows the mini program, which is light only
 			// (Loboo's own pages do the same), so "system" never resolves to dark there. Explicit themes still apply.
-			// Its navigation bar shows the page title, which stays the entry's name (问一问 on the mini program home,
-			// as in backend/open_webui/loboo/pages.py): the titles pages set while you use the site are dropped.
+			// Its navigation bar shows the page title, which stays what this site is called in there (云端电脑, as in
+			// backend/open_webui/loboo/pages.py): the titles pages set while you use the site are dropped.
 			if (/miniProgram/i.test(navigator.userAgent)) {
 				document.documentElement.classList.add('mini-program');
 				const matchMedia = window.matchMedia.bind(window);
 				window.matchMedia = (query) =>
 					matchMedia(/prefers-color-scheme\s*:\s*dark/i.test(query) ? 'not all' : query);
-				document.title = '问一问';
+				document.title = '云端电脑';
 				Object.defineProperty(document, 'title', {
 					configurable: true,
-					get: () => '问一问',
+					get: () => '云端电脑',
 					set() {}
 				});
 			}

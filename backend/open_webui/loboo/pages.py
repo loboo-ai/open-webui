@@ -12,10 +12,10 @@ from fastapi.responses import HTMLResponse
 
 from open_webui.loboo import config
 
-# 小程序首页的入口名（萝卜 ops/host/miniapp/entries.json）。小程序的导航栏显示网页标题，
-# 小程序里各页的标题都固定成它（src/app.html 同样如此）。
-MINIAPP_TITLE = '问一问'
-# 会话失效或进入失败时回到小程序的网页页，经萝卜的入口重新进入（与「问一问」卡片打开的一样）；
+# 本站在小程序里叫什么。小程序的导航栏显示网页标题，小程序里各页的标题都固定成它（src/app.html
+# 同样如此）。成员从小程序首页的「Chat」和「我的电脑」里的云端电脑进来，看到的都是这个名字。
+MINIAPP_TITLE = '云端电脑'
+# 会话失效或进入失败时回到小程序的网页页，经萝卜的入口重新进入（与小程序首页的入口打开的一样）；
 # static/static/loader.js 里有同一个地址。
 MINIAPP_REENTRY = '/pages/web/index?' + urlencode(
     {'to': 'page', 'path': '/account/api/openwebui/enter', 'title': MINIAPP_TITLE}
