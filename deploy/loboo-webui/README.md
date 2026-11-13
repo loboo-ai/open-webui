@@ -58,6 +58,7 @@ loboo-webui 是萝卜二开的 Open WebUI，对外地址 `https://m.loboo-ai.com
 | 现象 | 先看 |
 | --- | --- |
 | 进入 ChatGPT 停在「确认登录」 | 日志里 `loboo: sign-in for user … awaits confirmation`：不是从小程序、也不是从 `LOBOO_TRUSTED_ORIGINS` 里的萝卜页面进来的 |
+| 「我的电脑」的云端电脑是空白，20 秒后显示「没能进入云端电脑」 | 同上一行的日志：框里出了「确认登录」，那一页不让嵌。看萝卜页面的源站在不在 `LOBOO_TRUSTED_ORIGINS` 里；这里的版本要先于萝卜服务上线 |
 | 对话提示「暂时取不到模型配置」 | 萝卜账号应用是否在跑、`LOBOO_SERVICE_TOKEN` 与萝卜的 `LOBOO_WEBUI_SERVICE_TOKEN` 是否一致 |
 | 对话提示「Codex 未开通或已到期」 | 这个成员在萝卜里的 Codex 状态 |
 | 模型列表是空的 | CPA 是否可达；重启后还没有成员登录过时，没有可借用的 key 去拉列表 |

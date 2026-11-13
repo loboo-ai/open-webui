@@ -71,6 +71,8 @@
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
 	import InboxButton from './InboxButton.svelte';
+	// loboo fork: the way to another computer when this site is shown inside Loboo's 我的电脑.
+	import SwitchComputerButton from '$lib/components/loboo/SwitchComputerButton.svelte';
 	import InboxHost from './InboxHost.svelte';
 	import InboxPanel from './InboxPanel.svelte';
 	let inboxHost: InboxHost;
@@ -1192,6 +1194,8 @@
 						</Tooltip>
 					</div>
 
+					<SwitchComputerButton rail />
+
 					{#each pinnedItems as itemId (itemId)}
 						{@const meta = getMenuItemMeta(itemId)}
 						{#if meta && isMenuItemVisible(itemId)}
@@ -1343,6 +1347,7 @@
 						{#if $config?.features?.enable_notifications}<InboxButton
 								onClose={() => inboxHost.close()}
 							/>{/if}
+						<SwitchComputerButton />
 						<Tooltip
 							content={$showSidebar ? $i18n.t('Close Sidebar') : $i18n.t('Open Sidebar')}
 							placement="bottom"

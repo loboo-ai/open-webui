@@ -1,7 +1,7 @@
 // loboo fork: whichever model answers, the chat presents it as 萝卜哥 with the Loboo logo. The model
 // selector keeps the real model names, and hovering 萝卜哥 shows which model it is.
 import { mount, unmount } from 'svelte';
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { toast } from 'svelte-sonner';
 import { WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 import { terminalServers, type Model } from '$lib/stores';
@@ -139,6 +139,68 @@ export const terminalSkillsWhileAsleep = async (
 export const rememberTerminalSkills = (selector: string, skills: TerminalSkill[]) => {
 	lastTerminalSkills.set(selector, skills);
 	return skills;
+};
+
+// ── Inside Loboo's 我的电脑, as its 云端电脑 ────────────────────────────────────────────────────────────────────────
+// Loboo's 我的电脑 page, on another site, shows this whole site in a frame and calls it 云端电脑. In there the site
+// works as it does on its own, plus two things. It tells that page which page it is on and what the page is called
+// (components/loboo/EmbedBridge.svelte), so that page's address and browser tab follow along. And the sidebar gains
+// a button that asks that page to open its list of computers (components/loboo/SwitchComputerButton.svelte); the
+// list is that page's, not ours.
+//
+// Which sites may be that page is the backend's LOBOO_TRUSTED_ORIGINS (GET /api/v1/loboo/embed). The exchange: once
+// the app is up we say `loboo:hello`; that page answers `loboo:embed`; if the answer comes from our parent window
+// and from a trusted origin, it becomes embedHost and from then on is sent `loboo:page` and `loboo:switch`. The
+// hello carries nothing, so it may go to whoever the parent is; everything after it is addressed to the trusted
+// origin and no other site receives it (a chat's title is the member's own).
+//
+// "Up" means the splash is gone: until it hears from us, that page keeps its own loading screen over the frame, so
+// the member sees one loading screen instead of theirs, then the sign-in pages, then our splash.
+//
+// Opened on its own the site is not in a frame, and none of this starts: no listener, no request, nothing stored.
+export const inFrame = () => typeof window !== 'undefined' && window.self !== window.top;
+
+// The origin of the Loboo page this site is framed by, once that page has answered; null until then and on its own.
+export const embedHost = writable<string | null>(null);
+
+// The same words as the menu it opens has in 我的电脑.
+export const SWITCH_COMPUTER_LABEL = '换一台电脑、管理电脑';
+
+const trustedOrigins = async (): Promise<string[]> => {
+	const body: unknown = await fetch(`${WEBUI_API_BASE_URL}/loboo/embed`, {
+		headers: { Accept: 'application/json' }
+	})
+		.then((res) => (res.ok ? res.json() : null))
+		.catch(() => null);
+	const origins =
+		typeof body === 'object' && body !== null && 'origins' in body ? body.origins : null;
+	return Array.isArray(origins) ? origins.filter((origin) => typeof origin === 'string') : [];
+};
+
+// Call only in a frame (inFrame). Returns how to stop listening.
+export const startEmbed = (): (() => void) => {
+	let trusted: Promise<string[]> | null = null;
+	const heard = async (event: MessageEvent) => {
+		if (event.source !== window.parent || event.data?.type !== 'loboo:embed') return;
+		trusted ??= trustedOrigins();
+		if ((await trusted).includes(event.origin)) embedHost.set(event.origin);
+	};
+	window.addEventListener('message', heard);
+	window.parent.postMessage({ type: 'loboo:hello' }, '*');
+	return () => window.removeEventListener('message', heard);
+};
+
+// x and y are the lower-left corner of the button that was clicked, where the page opens its menu.
+type HostMessage =
+	| { type: 'loboo:page'; path: string; title: string }
+	| { type: 'loboo:switch'; x: number; y: number };
+
+// False when there is no page to tell.
+export const tellHost = (message: HostMessage): boolean => {
+	const origin = get(embedHost);
+	if (!origin) return false;
+	window.parent.postMessage(message, origin);
+	return true;
 };
 
 // ── Links inside the WeChat mini program ──────────────────────────────────────────────────────────────────────────

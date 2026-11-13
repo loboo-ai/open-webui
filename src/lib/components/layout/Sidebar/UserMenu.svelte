@@ -10,6 +10,8 @@
 	import { getLogoutRedirectUrl, getSessionUser, userSignOut } from '$lib/apis/auths';
 
 	import { showSettings, mobile, showSidebar, user, config, settings } from '$lib/stores';
+	// loboo fork: no signing out inside Loboo's 我的电脑, see the Sign Out item below.
+	import { embedHost } from '$lib/loboo';
 
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
@@ -629,21 +631,25 @@
 				<HotkeyHint name="openSettings" className="ms-auto" />
 			</button>
 
-			<button
-				role="menuitem"
-				class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/60 dark:hover:bg-gray-800/60 transition cursor-pointer select-none"
-				type="button"
-				on:click={async () => {
-					const { hasChatViewDrafts } = await import('$lib/stores/chatViewStates');
-					if (hasChatViewDrafts()) confirmSignOut = true;
-					else await signOut();
-				}}
-			>
-				<div class="self-center">
-					<LogOutIcon className="size-3.5" strokeWidth="1.5" />
-				</div>
-				<div class=" self-center truncate">{$i18n.t('Sign Out')}</div>
-			</button>
+			<!-- loboo fork: inside Loboo's 我的电脑 the member is here as whoever is signed in to Loboo, and that page
+			signs them straight back in; signing out of this site alone would only flash the sign-in page. -->
+			{#if !$embedHost}
+				<button
+					role="menuitem"
+					class="flex h-[1.6875rem] items-center gap-2 rounded-xl px-2 text-[0.8125rem] w-full hover:bg-gray-50/60 dark:hover:bg-gray-800/60 transition cursor-pointer select-none"
+					type="button"
+					on:click={async () => {
+						const { hasChatViewDrafts } = await import('$lib/stores/chatViewStates');
+						if (hasChatViewDrafts()) confirmSignOut = true;
+						else await signOut();
+					}}
+				>
+					<div class="self-center">
+						<LogOutIcon className="size-3.5" strokeWidth="1.5" />
+					</div>
+					<div class=" self-center truncate">{$i18n.t('Sign Out')}</div>
+				</button>
+			{/if}
 		</DropdownMenu>
 	</div>
 </Dropdown>

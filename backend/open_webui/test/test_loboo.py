@@ -55,6 +55,28 @@ def test_pages_escape_dynamic_text():
     assert 'value="g&quot;rant"' in confirm
 
 
+def test_only_loboo_pages_may_frame_the_sign_in_pages(monkeypatch):
+    def ancestors(page):
+        return re.search(r'frame-ancestors ([^;]+)$', page.headers['content-security-policy']).group(1)
+
+    embeddable = [
+        lambda: pages.submit('t', '/', ''),
+        lambda: pages.bridge('token', '/'),
+        lambda: pages.error('x', miniapp=False),
+        lambda: pages.error('x', miniapp=True),
+    ]
+    confirm = lambda: pages.confirm('张三', 'a@loboo.ai', 'grant', '/')
+
+    trusted = frozenset({'https://service.loboo-ai.com', 'https://b.example'})
+    monkeypatch.setattr(config, 'LOBOO_TRUSTED_ORIGINS', trusted)
+    assert [ancestors(page()) for page in embeddable] == ['https://b.example https://service.loboo-ai.com'] * 4
+    # 确认页有「继续」，嵌进谁的页面都不行。
+    assert ancestors(confirm()) == "'none'"
+
+    monkeypatch.setattr(config, 'LOBOO_TRUSTED_ORIGINS', frozenset())
+    assert [ancestors(page()) for page in [*embeddable, confirm]] == ["'none'"] * 5
+
+
 @pytest.mark.asyncio
 async def test_loboo_cloud_gives_loboo_cli_the_member_key_only_in_per_user_terminals(monkeypatch):
     from open_webui.models.config import Config

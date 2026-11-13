@@ -21,7 +21,8 @@ LOBOO_SEARCH_MODEL = os.environ.get('LOBOO_SEARCH_MODEL', '').strip() or 'gpt-6.
 # 取到的配置用多久再重新取；萝卜服务不可达时，旧的 Key 最多再用多久。
 KEY_CACHE_TTL_SECONDS = int(os.environ.get('LOBOO_KEY_CACHE_TTL_SECONDS', '600'))
 STALE_MAX_SECONDS = int(os.environ.get('LOBOO_STALE_MAX_SECONDS', '21600'))
-# 从这些源站（萝卜的页面）跳来免密登录时不用确认，逗号分隔，如 https://service.loboo-ai.com。
+# 萝卜页面的源站，逗号分隔，如 https://service.loboo-ai.com。从这些源站跳来免密登录时不用确认；
+# 也只有它们能把本站放进框里（「我的电脑」的云端电脑）：免密登录的页面只让它们嵌，前端只认它们是外层。
 LOBOO_TRUSTED_ORIGINS = frozenset(
     origin.strip().rstrip('/').lower()
     for origin in os.environ.get('LOBOO_TRUSTED_ORIGINS', '').split(',')

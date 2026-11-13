@@ -63,6 +63,16 @@ def _json_for_script(value) -> str:
     return text
 
 
+def _frame_ancestors(embeddable: bool) -> str:
+    """
+    谁能把这一页放进框里。萝卜的页面（LOBOO_TRUSTED_ORIGINS）把 Chat 整页嵌进「我的电脑」的云端电脑，
+    免密登录的几页也在那个框里走。embeddable 的页面上没有要成员点了才生效的东西，只让这些源站嵌；
+    其余的页面和没配源站时谁都不能嵌。
+    """
+    origins = sorted(config.LOBOO_TRUSTED_ORIGINS) if embeddable else []
+    return ' '.join(origins) or "'none'"
+
+
 def _page(
     title: str,
     body: str,
@@ -71,11 +81,12 @@ def _page(
     status_code: int = 200,
     wechat: bool = False,
     referrer: str = 'no-referrer',
+    embeddable: bool = False,
 ) -> HTMLResponse:
     scripts = f"'nonce-{nonce}'" + (f' {JWEIXIN}' if wechat else '')
     csp = (
         f"default-src 'none'; script-src {scripts}; style-src 'nonce-{nonce}'; img-src 'self' data:; "
-        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        f"form-action 'self'; base-uri 'none'; frame-ancestors {_frame_ancestors(embeddable)}"
     )
     document = (
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
@@ -115,7 +126,7 @@ def submit(ticket: str, next_path: str, basis: str) -> HTMLResponse:
         f'<script nonce="{nonce}">document.getElementById(\'loboo-sso\').submit();</script>'
     )
     # 同确认页：提交时要带上真实的 Origin，兑换接口据此核对同源。
-    return _page('正在进入…', body, nonce=nonce, referrer='same-origin')
+    return _page('正在进入…', body, nonce=nonce, referrer='same-origin', embeddable=True)
 
 
 def bridge(token: str, next_path: str) -> HTMLResponse:
@@ -131,7 +142,7 @@ def bridge(token: str, next_path: str) -> HTMLResponse:
         'location.replace(d.next);'
         '})();</script>'
     )
-    return _page('正在进入…', body, nonce=nonce)
+    return _page('正在进入…', body, nonce=nonce, embeddable=True)
 
 
 def confirm(display_name: str, browser_login: str | None, grant: str, next_path: str) -> HTMLResponse:
@@ -155,16 +166,18 @@ def error(message: str, *, miniapp: bool, retry: bool = False, status_code: int 
     """
     进入失败。在小程序里给“重新进入”，回小程序重新换票据；retry 为 True（票据失效）时自动回去一次，
     30 秒内不重复，免得来回跳。浏览器里给“回萝卜重新进入”，回萝卜服务首页重新点 ChatGPT；没配首页地址时给“前往登录”。
+    回萝卜是换掉整个窗口（target="_top"）：这一页在「我的电脑」的框里时，不把萝卜首页开在框里。
     """
     nonce = secrets.token_urlsafe(16)
     if not miniapp:
         action = (
-            f'<a class="button primary" href="{html.escape(config.LOBOO_PORTAL_URL)}">回萝卜重新进入</a>'
+            f'<a class="button primary" target="_top" href="{html.escape(config.LOBOO_PORTAL_URL)}">'
+            '回萝卜重新进入</a>'
             if config.LOBOO_PORTAL_URL
             else '<a class="button primary" href="/auth">前往登录</a>'
         )
         body = f'<h1>没能进入</h1><p>{html.escape(message)}</p><div class="actions">{action}</div>'
-        return _page('没能进入', body, nonce=nonce, status_code=status_code)
+        return _page('没能进入', body, nonce=nonce, status_code=status_code, embeddable=True)
     data = _json_for_script({'url': MINIAPP_REENTRY, 'auto': retry})
     body = (
         f'<h1>没能进入</h1><p>{html.escape(message)}</p>'
@@ -180,4 +193,4 @@ def error(message: str, *, miniapp: bool, retry: bool = False, status_code: int 
         'if(d.auto&&now-last>30000){try{localStorage.setItem(key,String(now));}catch(e){}go();}'
         '})();</script>'
     )
-    return _page('没能进入', body, nonce=nonce, status_code=status_code, wechat=True)
+    return _page('没能进入', body, nonce=nonce, status_code=status_code, wechat=True, embeddable=True)

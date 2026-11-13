@@ -208,6 +208,15 @@ async def confirm(
     return await _sign_in(request, user, safe_next(next_path), db)
 
 
+@router.get('/embed')
+async def embed():
+    """
+    前端发现自己在别的页面的框里时问：哪些源站可以把本站嵌成「我的电脑」的云端电脑（src/lib/loboo.ts）。
+    就是萝卜页面的源站，不是秘密，不用登录；不在框里时前端不问。
+    """
+    return {'origins': sorted(config.LOBOO_TRUSTED_ORIGINS)}
+
+
 class CloudWakeForm(BaseModel):
     terminal_id: str
 

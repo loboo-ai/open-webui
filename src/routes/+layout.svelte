@@ -81,6 +81,7 @@
 	} from '$lib/utils';
 	import { setTextScale } from '$lib/utils/text-scale';
 	import { installMiniProgramLinks } from '$lib/loboo';
+	import EmbedBridge from '$lib/components/loboo/EmbedBridge.svelte';
 	import { initializeTether, renewTetherSession } from '$lib/utils/tether';
 
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
@@ -1541,6 +1542,9 @@
 {/if}
 
 {#if loaded}
+	<!-- loboo fork: talks to Loboo's 我的电脑 when this site is shown inside it; does nothing on its own. It starts
+	only now, with the splash gone: that page keeps its own "loading" up until it hears from here. -->
+	<EmbedBridge />
 	<div class="flex h-dvh w-full overflow-hidden">
 		<div class="min-w-0 flex-1">
 			{#if mfaManagement}
