@@ -6,9 +6,14 @@
 </script>
 
 <script lang="ts">
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { getContext, onDestroy, onMount, tick } from 'svelte';
 	import { config } from '$lib/stores';
 	import { injectCsp } from '$lib/utils/csp';
+	import { clampFrameHeight, withHeightReporter } from '$lib/utils/frameHeight';
+	import FullScreenModal from '$lib/components/common/FullScreenModal.svelte';
+	import ArrowsPointingOut from '$lib/components/icons/ArrowsPointingOut.svelte';
+
+	const i18n: any = getContext('i18n');
 
 	// Props
 	export let src: string | null = null; // URL or raw HTML (auto-detected)
@@ -31,6 +36,12 @@
 	export let allowFullscreen = true;
 
 	export let payload = null; // payload to send into the iframe on request
+
+	// loboo fork: in a message the frame is as tall as its content (utils/frameHeight.ts) and has a button that opens
+	// the same content over the whole screen. `fill` is for where the container sets the height instead (the side
+	// panel, the full-screen copy below): nothing sizes the frame from its content and there is no button.
+	export let fill = false;
+	let fullScreen = false;
 
 	let iframe: HTMLIFrameElement | null = null;
 	let iframeSrc: string | null = null;
@@ -61,7 +72,8 @@
 			iframeSrc = src as string;
 			iframeDoc = null;
 		} else {
-			iframeDoc = await processHtmlForDeps(src as string);
+			const doc = await processHtmlForDeps(src as string);
+			iframeDoc = fill ? doc : withHeightReporter(doc);
 			iframeSrc = null;
 		}
 	};
@@ -158,8 +170,8 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		if (!iframe || e.source !== iframe.contentWindow) return;
 
 		const data = e.data || {};
-		if (data?.type === 'iframe:height' && typeof data.height === 'number') {
-			iframe.style.height = Math.max(0, data.height) + 'px';
+		if (!fill && data?.type === 'iframe:height' && typeof data.height === 'number') {
+			iframe.style.height = clampFrameHeight(data.height) + 'px';
 		}
 
 		// Pong message for testing connectivity
@@ -181,7 +193,7 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 
 	// When the iframe loads, try same-origin resize (cross-origin will noop)
 	const onLoad = async () => {
-		requestAnimationFrame(resizeSameOrigin);
+		if (!fill) requestAnimationFrame(resizeSameOrigin);
 
 		if (iframe?.contentWindow && iframe.contentWindow !== registeredWindow) {
 			if (registeredWindow) {
@@ -214,31 +226,67 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 	});
 </script>
 
-{#if iframeDoc}
-	<iframe
-		bind:this={iframe}
-		srcdoc={injectCsp(iframeDoc, $config?.ui?.iframe_csp ?? '')}
-		{title}
-		class={iframeClassName}
-		style={`${initialHeight ? `height:${initialHeight}px;` : ''}`}
-		width="100%"
-		frameborder="0"
-		{sandbox}
-		{allowFullscreen}
-		on:load={onLoad}
-	/>
-{:else if iframeSrc}
-	<iframe
-		bind:this={iframe}
-		src={iframeSrc}
-		{title}
-		class={iframeClassName}
-		style={`${initialHeight ? `height:${initialHeight}px;` : ''}`}
-		width="100%"
-		frameborder="0"
-		{sandbox}
-		referrerpolicy={referrerPolicy}
-		{allowFullscreen}
-		on:load={onLoad}
-	/>
+<!-- loboo fork: the box is what the full-screen button sits in; with `fill` it makes no box of its own, so the frame
+	still takes its height from the container (see `fill`) -->
+<div class={fill ? 'contents' : 'group/frame relative'}>
+	{#if iframeDoc}
+		<iframe
+			bind:this={iframe}
+			srcdoc={injectCsp(iframeDoc, $config?.ui?.iframe_csp ?? '')}
+			{title}
+			class={iframeClassName}
+			style={`${initialHeight ? `height:${initialHeight}px;` : ''}`}
+			width="100%"
+			frameborder="0"
+			{sandbox}
+			{allowFullscreen}
+			on:load={onLoad}
+		/>
+	{:else if iframeSrc}
+		<iframe
+			bind:this={iframe}
+			src={iframeSrc}
+			{title}
+			class={iframeClassName}
+			style={`${initialHeight ? `height:${initialHeight}px;` : ''}`}
+			width="100%"
+			frameborder="0"
+			{sandbox}
+			referrerpolicy={referrerPolicy}
+			{allowFullscreen}
+			on:load={onLoad}
+		/>
+	{/if}
+	{#if !fill && (iframeDoc || iframeSrc)}
+		<button
+			type="button"
+			class="absolute top-2 right-2 flex size-7 items-center justify-center rounded-lg bg-white/90 text-gray-500 opacity-0 shadow-sm ring-1 ring-black/5 transition hover:text-gray-900 group-hover/frame:opacity-100 group-focus-within/frame:opacity-100 pointer-coarse:opacity-100 dark:bg-gray-850/90 dark:text-gray-400 dark:ring-white/10 dark:hover:text-gray-100"
+			aria-label={$i18n.t('Open in full screen')}
+			title={$i18n.t('Open in full screen')}
+			on:click={() => (fullScreen = true)}
+		>
+			<ArrowsPointingOut className="size-4" />
+		</button>
+	{/if}
+</div>
+
+{#if !fill}
+	<!-- loboo fork: a second frame with the same content, so the page starts over in it -->
+	<FullScreenModal bind:show={fullScreen}>
+		<svelte:self
+			{src}
+			{title}
+			{args}
+			{allowScripts}
+			{allowForms}
+			{allowSameOrigin}
+			{allowPopups}
+			{allowDownloads}
+			{referrerPolicy}
+			{allowFullscreen}
+			{payload}
+			fill
+			iframeClassName="w-full h-full"
+		/>
+	</FullScreenModal>
 {/if}

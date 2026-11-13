@@ -17,6 +17,7 @@
 	import { downloadFileBlob, downloadFilePreview, readFile } from '$lib/apis/terminal';
 	import { getFileContentById } from '$lib/apis/files';
 	import FilePreview from '$lib/components/chat/FileNav/FilePreview.svelte';
+	import FullScreenModal from '$lib/components/common/FullScreenModal.svelte';
 	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
 	import { fileIconName } from '$lib/components/chat/FileNav/fileIcon';
 	import { normalizeDocumentTargetPage } from '$lib/utils/documentPreview';
@@ -110,6 +111,24 @@
 	) {
 		void loadPreview(previewKey);
 	}
+
+	// loboo fork: the same preview over the whole screen, offered only while the card is showing one. Not while 萝卜云
+	// sleeps or is still being asked (the copy must not be what wakes it), and not for a file with nothing to show.
+	let fullScreen = false;
+	$: hasPreview = [
+		fileImageUrl,
+		fileVideoUrl,
+		fileAudioUrl,
+		filePdfData,
+		fileSqliteData,
+		fileModelData,
+		fileDocxData,
+		fileContent,
+		fileOfficeHtml,
+		fileOfficeSlides
+	].some((value) => value !== null);
+	$: canFullScreen = expanded && !unavailable && !previewAsleep && !loading && !error && hasPreview;
+	$: if (!canFullScreen) fullScreen = false;
 
 	const getExt = (value: string) => value.split('.').pop()?.toLowerCase() ?? '';
 	const isImage = (value: string) => IMAGE_EXTS.has(getExt(value));
@@ -317,6 +336,16 @@
 		>
 			<Icon name="download" size={13} />
 		</button>
+		<!-- loboo fork: see canFullScreen -->
+		<button
+			type="button"
+			class="mr-1 flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 disabled:opacity-40 disabled:hover:text-gray-400 dark:text-gray-500 dark:hover:text-gray-200 dark:disabled:hover:text-gray-500"
+			disabled={!canFullScreen}
+			on:click|stopPropagation={() => (fullScreen = true)}
+			aria-label={t('Open in full screen')}
+		>
+			<Icon name="expand" size={13} />
+		</button>
 		{#if !fileId}
 			<button
 				type="button"
@@ -387,3 +416,33 @@
 		{/if}
 	{/if}
 </div>
+
+<!-- loboo fork: see canFullScreen. A second preview of what the card has loaded, as tall as the screen; it takes the
+	same props as the card's above, so a prop added there goes here too. -->
+<FullScreenModal bind:show={fullScreen} title={name}>
+	<div class="h-full overflow-hidden bg-gray-50 dark:bg-gray-950">
+		<FilePreview
+			selectedFile={path}
+			fileLoading={loading}
+			{fileImageUrl}
+			{fileVideoUrl}
+			{fileAudioUrl}
+			{filePdfData}
+			{fileSqliteData}
+			{fileModelData}
+			{fileDocxData}
+			{fileContent}
+			baseUrl={fileId ? '' : previewBaseUrl}
+			{chatId}
+			apiKey={terminal?.key ?? ''}
+			{fileOfficeHtml}
+			{fileOfficeSlides}
+			{currentSlide}
+			{targetPage}
+			{excelSheetNames}
+			{selectedExcelSheet}
+			onSheetChange={loadExcelSheet}
+			readOnly={true}
+		/>
+	</div>
+</FullScreenModal>
