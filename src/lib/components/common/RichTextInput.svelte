@@ -3,6 +3,7 @@
 	import DOMPurify from 'dompurify';
 	import { toast } from 'svelte-sonner';
 	import { copyToClipboard } from '$lib/utils';
+	import { htmlCopyGarbled } from '$lib/loboo';
 	import { equalEditorJSON } from '$lib/utils/editorJson';
 	import { showCallOverlay, skills, terminalSkills } from '$lib/stores';
 
@@ -1423,6 +1424,12 @@
 									const fragment = Fragment.fromArray(nodes);
 									const tr = state.tr.replaceWith(from, to, fragment).setMeta('paste', true);
 									dispatch(tr.scrollIntoView());
+									event.preventDefault();
+									return true;
+								}
+								// loboo fork: a clipboard whose HTML copy is mojibake pastes its plain copy ($lib/loboo).
+								if (htmlCopyGarbled(plainText, event.clipboardData.getData('text/html'))) {
+									view.pasteText(plainText, event);
 									event.preventDefault();
 									return true;
 								}

@@ -417,3 +417,26 @@ export const blockDownloadInMiniProgram = (): boolean => {
 	showNotHere('download');
 	return true;
 };
+
+// Pasting. A clipboard carries the same text twice, as HTML and as plain text, and the editor pastes the HTML. On an
+// iPhone the HTML copy can arrive as mojibake, its UTF-8 read as GBK (一 turns into 涓€): most likely the copying app
+// declared no charset and the phone fell back to its language's default. Mojibake shares none of the original's
+// letters, so the two copies stop agreeing. Bytes are lost in the misreading: it cannot be decoded back, only passed
+// over for the plain copy.
+const foreignLetters = (text: string) =>
+	new Set(text.normalize('NFC').match(/(?!\p{ASCII})\p{L}/gu));
+
+// Whether fewer than half of the plain copy's non-ASCII letters are in the HTML copy's text. ASCII survives every
+// misreading, and punctuation, bullets and emoji differ between honest copies, so only those letters are compared.
+export const copiesDisagree = (plain: string, htmlText: string): boolean => {
+	const expected = foreignLetters(plain);
+	const found = foreignLetters(htmlText);
+	let shared = 0;
+	for (const letter of expected) if (found.has(letter)) shared += 1;
+	return shared * 2 < expected.size;
+};
+
+// Whether a clipboard's HTML copy is mojibake, and its plain copy is the one to paste.
+export const htmlCopyGarbled = (plain: string, html: string): boolean =>
+	Boolean(plain && html) &&
+	copiesDisagree(plain, new DOMParser().parseFromString(html, 'text/html').body.textContent ?? '');

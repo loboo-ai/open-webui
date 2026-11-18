@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyLink } from './loboo';
+import { classifyLink, copiesDisagree } from './loboo';
 
 // The mini program's link rules (docs/loboo-cloud-plan-2026-10-25.md 3.6), as the click listener and the
 // window.open wrapper see them.
@@ -60,5 +60,24 @@ describe('classifyLink', () => {
 		});
 		// http and https are different sites.
 		expect(classifyLink('http://m.haina-api.net/c/2', site).rule).toBe('R4');
+	});
+});
+
+describe('copiesDisagree', () => {
+	// UTF-8 read as GBK: how the HTML copy of an iPhone's clipboard reached the chat input.
+	const misread = (text: string) => new TextDecoder('gbk').decode(new TextEncoder().encode(text));
+
+	it('tells a misread HTML copy from its plain copy', () => {
+		const plain = '第一章\n一个最简单的办法，是把问题拆开。\n——THE END——';
+		expect(misread('一')).toBe('涓€');
+		expect(copiesDisagree(plain, misread(plain))).toBe(true);
+		expect(copiesDisagree('你好', misread('你好'))).toBe(true);
+	});
+
+	it('lets an honest HTML copy through', () => {
+		// List markers and emoji are in the plain copy only; an accent may be composed in one copy and not the other.
+		expect(copiesDisagree('第一章\n• 把问题拆开 😀', '第一章把问题拆开')).toBe(false);
+		expect(copiesDisagree('café', 'cafe\u0301')).toBe(false);
+		expect(copiesDisagree('plain ASCII — “quoted”', 'something else')).toBe(false);
 	});
 });
