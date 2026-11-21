@@ -26,7 +26,7 @@
 | `/opt/loboo-terminals/data/terminals.db` | 编排服务的 SQLite：策略、审计 |
 | `/usr/local/sbin/loboo-terminals-fw.sh` | 宿主机防护脚本（本目录 `loboo-terminals-fw.sh`） |
 | `/etc/systemd/system/loboo-terminals-fw.service` | 开机和 Docker 重启后重新挂防护链 |
-| 镜像 `loboo/open-terminal:0.17.7-r4` | `image/build.sh` 在本机构建，不推仓库；上一版 `0.14.4-r3` 留着回滚 |
+| 镜像 `loboo/open-terminal:0.17.7-r5` | `image/build.sh` 在本机构建，不推仓库；上一版 `0.17.7-r4` 留着回滚（只换了 loboo-cli 技能 1.4.0） |
 
 `/opt/loboo-terminals` 本身权限 700。本目录（仓库 `deploy/loboo-terminals/`）是这些文件的来源，改动先在这里提交，再复制到宿主机。
 
@@ -86,7 +86,7 @@
 
 `image/` 下是终端镜像：官方 open-terminal，加上搜索工具、loboo-cli 的种子和技能，并把 `/bin/sh` 改指 bash。中文字体（Word/PowerPoint 预览在容器里转 PDF 要用）从 0.17 起官方镜像自带。
 
-- 构建：`image/build.sh loboo/open-terminal:0.17.7-r4`。它从 loboo-mono 检出（默认 `/opt/gits/loboo-mono`，`LOBOO_MONO` 可改）拷 `skills/loboo-cli`，和桌面端装的是同一份；构建时要能访问 `service.loboo-ai.com` 下载 CLI。镜像只在生产机上构建，开发机（Mac）构建出来是 arm64。
+- 构建：`image/build.sh loboo/open-terminal:0.17.7-r5`。它从 loboo-mono 检出（默认 `/opt/gits/loboo-mono`，`LOBOO_MONO` 可改）拷 `skills/loboo-cli`，和桌面端装的是同一份；构建时要能访问 `service.loboo-ai.com` 下载 CLI。镜像只在生产机上构建，开发机（Mac）构建出来是 arm64。
 - 搜索工具：`ripgrep` 和 `fd-find`（`fd` 链到 `fdfind`）。Codex 等模型习惯先用 rg；open-terminal 的 `match_files` 有 rg 才不跳过大于 1 MiB 的文件。
 - `/bin/sh` 是 bash：open-terminal 的 `run_command` 走 `/bin/sh`，模型写的却是 bash。dash 会把 `cmd &> f` 静默拆成"后台运行 cmd、清空 f"，不报错。trixie 上用 debconf 选 sh 已经不起作用，所以按 `dash.preinst` 的说明用 `dpkg-divert` 改：dpkg 记着这处改动，dash 升级或重装也不会改回去。以 `sh` 的名字启动时 bash 处于 POSIX 模式，和平常的 bash 有两处不同：`source` 不带斜杠的文件名会失败；`source` 失败会让整条命令中止。
 - `PATH` 最前面是 `/home/user/.loboo/bin`，模型直接写 `loboo-cli` 也能找到。生产上唯一一次非 0 退出，就是模型跑 `command -v loboo-cli` 找不到命令。
@@ -174,7 +174,7 @@ du -sh data/terminals/*                   # 每个人的 home 大小
 4. 装防护：复制 `loboo-terminals-fw.sh` 到 `/usr/local/sbin/`（755），`loboo-terminals-fw.service` 到 `/etc/systemd/system/`，`systemctl daemon-reload && systemctl enable --now loboo-terminals-fw.service`。脚本默认取出口网卡上的公网 IP。如果新机器在 VPC 里、网卡上只有内网地址，就在服务里加 `Environment=LOBOO_TERM_PUBLIC_IPS=<公网 IP>`，或者确认 `service.loboo-ai.com` 不在本机。
 5. 准备 `/opt/loboo-terminals`（权限 700）：复制 `docker-compose.yml`、`policy-loboo.json`；`.env` 沿用旧机器的值，这样 loboo-webui 里的连接 key 不用改。
 6. 迁数据：先停旧机器的编排服务，再 `rsync -a` 旧机器的 `/opt/loboo-terminals/data/` 过来（home 属主是 uid 1000，要保留；`terminals.db` 一起带上）。
-7. 构建镜像：`deploy/loboo-terminals/image/build.sh loboo/open-terminal:0.17.7-r4`。
+7. 构建镜像：`deploy/loboo-terminals/image/build.sh loboo/open-terminal:0.17.7-r5`。
 8. `cd /opt/loboo-terminals && docker compose pull && docker compose up -d`，再按「日常运维」应用策略。
 9. loboo-webui 一侧：如果 loboo-webui 也迁到了新机器并且编排服务仍在本机，连接地址 `http://127.0.0.1:18210` 不用改；否则按「在 LoboOS 里怎么接」改连接 `url`。模型默认值 `terminalId` 跟着 loboo-webui 的数据库走。
 10. 跑 `probe-network.sh` 和 `probe-user-path.sh`，再做一遍端到端。

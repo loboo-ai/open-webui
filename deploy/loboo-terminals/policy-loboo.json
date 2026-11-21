@@ -1,5 +1,5 @@
 {
-  "image": "loboo/open-terminal:0.17.7-r4",
+  "image": "loboo/open-terminal:0.17.7-r5",
   "cpu_limit": "1",
   "memory_limit": "1Gi",
   "idle_timeout_minutes": 15,
