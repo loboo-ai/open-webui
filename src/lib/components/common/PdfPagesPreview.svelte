@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
-	import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+	import { loadPdfjs } from '$lib/utils/pdfjs'; // loboo fork: the legacy build, loaded in one place
 	import Spinner from './Spinner.svelte';
 	import PDFViewer from './PDFViewer.svelte';
 	import type { FileComment, CommentResult } from '$lib/utils/comments/types';
@@ -72,8 +72,7 @@
 		thumbnails = [];
 
 		try {
-			const pdfjs = await import('pdfjs-dist');
-			pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+			const pdfjs = await loadPdfjs();
 
 			pdfDoc?.destroy();
 			pdfDoc = await pdfjs.getDocument({ data: pdfData, wasmUrl: '/wasm/' }).promise;

@@ -21,7 +21,7 @@ dayjs.extend(localizedFormat);
 
 import { TTS_RESPONSE_SPLIT } from '$lib/types';
 
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { loadPdfjs } from '$lib/utils/pdfjs'; // loboo fork: the legacy build, loaded in one place
 
 import { marked } from 'marked';
 import markedExtension from '$lib/utils/marked/extension';
@@ -1851,52 +1851,6 @@ export const parseJsonValue = (value: string): any => {
 	return value;
 };
 
-type ReadableStreamWithAsyncIterator<T> = ReadableStream<T> & {
-	[Symbol.asyncIterator]?: () => AsyncIterableIterator<T>;
-};
-
-function ensureReadableStreamAsyncIterator() {
-	if (typeof ReadableStream === 'undefined') {
-		return;
-	}
-
-	const prototype = ReadableStream.prototype as ReadableStreamWithAsyncIterator<unknown>;
-	if (prototype[Symbol.asyncIterator]) {
-		return;
-	}
-
-	Object.defineProperty(prototype, Symbol.asyncIterator, {
-		value: async function* (this: ReadableStream<unknown>) {
-			const reader = this.getReader();
-			try {
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) {
-						return;
-					}
-					yield value;
-				}
-			} finally {
-				reader.releaseLock();
-			}
-		},
-		configurable: true,
-		writable: true
-	});
-}
-
-async function ensurePDFjsLoaded() {
-	ensureReadableStreamAsyncIterator();
-	if (!window.pdfjsLib) {
-		const pdfjs = await import('pdfjs-dist');
-		pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-		if (!window.pdfjsLib) {
-			throw new Error('pdfjsLib is required for PDF extraction');
-		}
-	}
-	return window.pdfjsLib;
-}
-
 export const extractContentFromFile = async (file: File) => {
 	// Known text file extensions for extra fallback
 	const textExtensions = [
@@ -1921,7 +1875,7 @@ export const extractContentFromFile = async (file: File) => {
 
 	// Uses pdfjs to extract text from PDF
 	async function extractPdfText(file: File) {
-		const pdfjsLib = await ensurePDFjsLoaded();
+		const pdfjsLib = await loadPdfjs();
 		const arrayBuffer = await file.arrayBuffer();
 		const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 		let allText = '';
